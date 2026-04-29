@@ -8,10 +8,12 @@ terraform {
 
 provider "fw-analyzer" {}
 
-data "fw_analyzer_analysis" "check" {
-  policy_json = file("policy.json")
+# 🔍 Firewall policy analysis
+data "fw-analyzer_analysis" "check" {
+  policy_json = file("${path.module}/policy.json")
 }
 
+# 📤 Output findings
 output "findings" {
-  value = data.fw_analyzer_analysis.check.findings
+  value = data.fw-analyzer_analysis.check.findings
 }
