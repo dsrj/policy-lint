@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	"://github.com"
-	"://github.com/schema"
-	"://github.com"
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 type analysisDataSource struct{}
