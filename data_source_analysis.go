@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
-	"github.com/hashicorp/terraform-plugin-framework/schema"
+	datasourceschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -20,19 +20,19 @@ func (d *analysisDataSource) Metadata(_ context.Context, req datasource.Metadata
 }
 
 func (d *analysisDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
-	resp.Schema = schema.Schema{
-		Attributes: map[string]schema.Attribute{
-			"policy_json": schema.StringAttribute{
+	resp.Schema = datasourceschema.Schema{
+		Attributes: map[string]datasourceschema.Attribute{
+			"policy_json": datasourceschema.StringAttribute{
 				Required: true,
 			},
-			"findings": schema.ListNestedAttribute{
+			"findings": datasourceschema.ListNestedAttribute{
 				Computed: true,
-				NestedObject: schema.NestedAttributeObject{
-					Attributes: map[string]schema.Attribute{
-						"type":      schema.StringAttribute{Computed: true},
-						"severity":  schema.StringAttribute{Computed: true},
-						"message":   schema.StringAttribute{Computed: true},
-						"justified": schema.BoolAttribute{Computed: true},
+				NestedObject: datasourceschema.NestedAttributeObject{
+					Attributes: map[string]datasourceschema.Attribute{
+						"type":      datasourceschema.StringAttribute{Computed: true},
+						"severity":  datasourceschema.StringAttribute{Computed: true},
+						"message":   datasourceschema.StringAttribute{Computed: true},
+						"justified": datasourceschema.BoolAttribute{Computed: true},
 					},
 				},
 			},
