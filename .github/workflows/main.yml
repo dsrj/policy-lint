@@ -17,10 +17,19 @@ jobs:
 
       - name: Build Provider
         run: |
-          go mod tidy
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o terraform-provider-fw-analyzer
+            go version
 
-          chmod +x terraform-provider-fw-analyzer
+            # Clean old binary
+            rm -f terraform-provider-fw-analyzer
+        
+            # Force fully static binary (CRITICAL)
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -ldflags="-s -w" -o terraform-provider-fw-analyzer
+        
+            chmod +x terraform-provider-fw-analyzer
+        
+            # Debug binary
+            file terraform-provider-fw-analyzer
+            ldd terraform-provider-fw-analyzer || true
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -37,6 +46,10 @@ jobs:
             direct {}
           }
           EOF
+      - name: Test Provider Binary
+        run: |
+          echo "Running provider manually..."
+          ./terraform-provider-fw-analyzer || true    
 
       - name: Terraform Init
         run: |
