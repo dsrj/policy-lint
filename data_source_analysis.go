@@ -11,6 +11,7 @@ import (
 
 type analysisDataSource struct{}
 
+// ✅ Ensure interface is fully implemented (prevents runtime crash)
 var _ datasource.DataSource = &analysisDataSource{}
 
 func NewAnalysisDataSource() datasource.DataSource {
@@ -53,12 +54,25 @@ func (d *analysisDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 
+	// ✅ Prevent crash if value is null or unknown
+	if data.PolicyJSON.IsNull() || data.PolicyJSON.IsUnknown() {
+		return
+	}
+
 	var policy Policy
 	if err := json.Unmarshal([]byte(data.PolicyJSON.ValueString()), &policy); err != nil {
 		resp.Diagnostics.AddError("JSON Error", err.Error())
 		return
 	}
 
+	// ✅ Protect against runtime panic in analyzer
+	defer func() {
+		if r := recover(); r != nil {
+			resp.Diagnostics.AddError("Analyzer Panic", "Analyzer crashed during execution")
+		}
+	}()
+
 	data.Findings = analyze(policy)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
