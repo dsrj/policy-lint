@@ -21,7 +21,7 @@
       "destination": ["0.0.0.0/0"],
       "ports": ["443"],
       "protocol": "TCP",
-      "justification": "This is shadowed by Rule 100, but we justified it."
+      "justification": "Shadowed but intentionally allowed"
     },
     {
       "name": "partial_overlap_rule",
@@ -46,7 +46,7 @@
       "priority": 1100,
       "action": "allow",
       "source": ["10.0.0.0/24"],
-      "fqdns": ["://google.com"]
+      "fqdns": ["google.com"]
     }
   ]
 }
