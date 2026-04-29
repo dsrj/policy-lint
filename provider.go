@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 
-	"://github.com"
-	"://github.com"
-	"://github.com"
+	"github.com/hashicorp/terraform-plugin-framework/provider"
+"github.com/hashicorp/terraform-plugin-framework/datasource"
+"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
 type fwProvider struct{}
