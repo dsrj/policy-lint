@@ -9,7 +9,8 @@ import (
 
 func main() {
 	err := providerserver.Serve(context.Background(), NewProvider, providerserver.ServeOpts{
-		Address: "local/fw-analyzer",
+		Address:         "local/fw-analyzer",
+		ProtocolVersion: 6,
 	})
 
 	if err != nil {
