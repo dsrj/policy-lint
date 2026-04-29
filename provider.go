@@ -15,7 +15,7 @@ func NewProvider() provider.Provider {
 }
 
 func (p *fwProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
-	resp.TypeName = "fw_analyzer"
+	resp.TypeName = "fw-analyzer"
 }
 
 func (p *fwProvider) Schema(_ context.Context, _ provider.SchemaRequest, _ *provider.SchemaResponse) {}
