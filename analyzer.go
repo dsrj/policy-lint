@@ -54,12 +54,12 @@ func expand(targets []string, groups map[string][]string) []netip.Prefix {
 	for _, t := range targets {
 		if val, exists := groups[t]; exists {
 			for _, ip := range val {
-				if p, err := netip.ParsePrefix(ip); err == nil {
+				if p, err := netip.ParsePrefix(ip); err == nil && p.IsValid() {
 					out = append(out, p)
 				}
 			}
 		} else {
-			if p, err := netip.ParsePrefix(t); err == nil {
+			if p, err := netip.ParsePrefix(t); err == nil && p.IsValid() {
 				out = append(out, p)
 			}
 		}
@@ -99,7 +99,6 @@ func analyze(p Policy) []Finding {
 				r1, r2 = r2, r1
 			}
 
-			// ✅ SAFE Shadow check (prevents panic)
 			if r1.Src.IsValid() && r2.Src.IsValid() &&
 				r1.Dst.IsValid() && r2.Dst.IsValid() &&
 				r1.Src.Contains(r2.Src.Addr()) &&
