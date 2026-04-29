@@ -11,7 +11,6 @@ import (
 
 type analysisDataSource struct{}
 
-// ✅ Ensure interface is fully implemented (prevents runtime crash)
 var _ datasource.DataSource = &analysisDataSource{}
 
 func NewAnalysisDataSource() datasource.DataSource {
@@ -25,9 +24,7 @@ func (d *analysisDataSource) Metadata(_ context.Context, req datasource.Metadata
 func (d *analysisDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = datasourceschema.Schema{
 		Attributes: map[string]datasourceschema.Attribute{
-			"policy_json": datasourceschema.StringAttribute{
-				Required: true,
-			},
+			"policy_json": datasourceschema.StringAttribute{Required: true},
 			"findings": datasourceschema.ListNestedAttribute{
 				Computed: true,
 				NestedObject: datasourceschema.NestedAttributeObject{
@@ -54,7 +51,6 @@ func (d *analysisDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 
-	// ✅ Prevent crash if value is null or unknown
 	if data.PolicyJSON.IsNull() || data.PolicyJSON.IsUnknown() {
 		return
 	}
@@ -65,14 +61,12 @@ func (d *analysisDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 
-	// ✅ Protect against runtime panic in analyzer
 	defer func() {
 		if r := recover(); r != nil {
-			resp.Diagnostics.AddError("Analyzer Panic", "Analyzer crashed during execution")
+			resp.Diagnostics.AddError("Analyzer Panic", "Analyzer crashed")
 		}
 	}()
 
 	data.Findings = analyze(policy)
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
