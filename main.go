@@ -9,7 +9,7 @@ import (
 
 func main() {
 	err := providerserver.Serve(context.Background(), NewProvider, providerserver.ServeOpts{
-		Address:         "local/fw-analyzer",
+		Address:         "registry.terraform.io/local/fw-analyzer",
 		ProtocolVersion: 6,
 	})
 
