@@ -3,7 +3,7 @@
     "prod_networks": ["10.0.0.0/16", "10.1.0.0/16"],
     "dev_networks": ["10.2.0.0/16"],
     "critical_db": ["10.0.5.5/32"],
-    "invalid_group": ["invalid-ip"]
+    "bad_group": ["invalid-ip"]
   },
 
   "network_rules": [
@@ -26,11 +26,11 @@
       "destination": ["0.0.0.0/0"],
       "ports": ["443"],
       "protocol": "TCP",
-      "justification": "Expected to be shadowed by deny_all_prod"
+      "justification": "This rule is shadowed intentionally"
     },
 
     {
-      "name": "duplicate_rule",
+      "name": "duplicate_rule_1",
       "priority": 300,
       "action": "allow",
       "source": ["10.0.0.0/16"],
@@ -40,7 +40,7 @@
     },
 
     {
-      "name": "duplicate_rule_copy",
+      "name": "duplicate_rule_2",
       "priority": 301,
       "action": "allow",
       "source": ["10.0.0.0/16"],
@@ -50,20 +50,30 @@
     },
 
     {
-      "name": "partial_overlap",
+      "name": "protocol_mismatch_rule_1",
       "priority": 400,
       "action": "allow",
-      "source": ["10.0.0.0/8"],
+      "source": ["10.0.0.0/16"],
+      "destination": ["8.8.4.4/32"],
+      "ports": ["53"],
+      "protocol": "TCP"
+    },
+
+    {
+      "name": "protocol_mismatch_rule_2",
+      "priority": 401,
+      "action": "allow",
+      "source": ["10.0.0.0/16"],
       "destination": ["8.8.4.4/32"],
       "ports": ["53"],
       "protocol": "UDP"
     },
 
     {
-      "name": "invalid_ip_rule",
+      "name": "invalid_cidr_rule",
       "priority": 500,
       "action": "allow",
-      "source": ["invalid_group"],
+      "source": ["bad_group"],
       "destination": ["not-a-cidr"],
       "ports": ["80"],
       "protocol": "TCP"
@@ -80,12 +90,12 @@
     },
 
     {
-      "name": "mixed_ports_rule",
+      "name": "overly_permissive_ports",
       "priority": 700,
       "action": "allow",
       "source": ["dev_networks"],
       "destination": ["1.1.1.1/32"],
-      "ports": ["80", "443", "*"],
+      "ports": ["*"],
       "protocol": "TCP"
     }
 
@@ -102,35 +112,19 @@
     },
 
     {
-      "name": "multiple_wildcards",
+      "name": "invalid_fqdn_rule",
       "priority": 1100,
       "action": "allow",
       "source": ["10.0.0.0/24"],
-      "fqdns": ["*", "*.example.com"]
+      "fqdns": ["://bad-domain"]
     },
 
     {
-      "name": "valid_fqdn_rule",
+      "name": "valid_rule",
       "priority": 1200,
       "action": "allow",
       "source": ["10.0.0.0/24"],
-      "fqdns": ["google.com", "api.example.com"]
-    },
-
-    {
-      "name": "invalid_fqdn",
-      "priority": 1300,
-      "action": "allow",
-      "source": ["10.0.0.0/24"],
-      "fqdns": ["://bad-url"]
-    },
-
-    {
-      "name": "empty_fqdn",
-      "priority": 1400,
-      "action": "allow",
-      "source": ["10.0.0.0/24"],
-      "fqdns": []
+      "fqdns": ["example.com", "api.example.com"]
     }
 
   ]
