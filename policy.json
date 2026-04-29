@@ -17,6 +17,16 @@
       "ports": ["*"],
       "protocol": "Any"
     },
+    {
+      "name": "allow_db_override",
+      "priority": 200,
+      "action": "allow",
+      "source": ["critical_db"],
+      "destination": ["0.0.0.0/0"],
+      "ports": ["443"],
+      "protocol": "TCP",
+      "justification": "Temporary exception for database migration until firewall rules are refined"
+    },
 
     {
       "name": "shadowed_allow_db",
