@@ -11,6 +11,8 @@ import (
 
 type analysisDataSource struct{}
 
+var _ datasource.DataSource = &analysisDataSource{}
+
 func NewAnalysisDataSource() datasource.DataSource {
 	return &analysisDataSource{}
 }
