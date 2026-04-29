@@ -18,7 +18,7 @@ jobs:
       - name: Build Provider
         run: |
             go version
-
+            go mod tidy
             # Clean old binary
             rm -f terraform-provider-fw-analyzer
         
