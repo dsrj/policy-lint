@@ -53,6 +53,10 @@ type Finding struct {
 	Suggestion    string `tfsdk:"suggestion"`
 }
 
+func overlaps(r1, r2 RuleFlat) bool {
+	return r1.Src.Overlaps(r2.Src) && r1.Dst.Overlaps(r2.Dst)
+}
+
 func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []string) {
 	var out []netip.Prefix
 	var invalid []string
@@ -84,6 +88,7 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 
 	for _, r := range p.NetworkRules {
 
+		// Empty ports
 		if len(r.Ports) == 0 {
 			findings = append(findings, Finding{
 				Type:          "empty_ports",
@@ -95,6 +100,7 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 			})
 		}
 
+		// Overly permissive ports
 		for _, port := range r.Ports {
 			if port == "*" {
 				findings = append(findings, Finding{
@@ -111,6 +117,7 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 		srcs, invalidSrc := expand(r.Source, p.IPGroups)
 		dsts, invalidDst := expand(r.Destination, p.IPGroups)
 
+		// Invalid CIDR
 		for _, bad := range append(invalidSrc, invalidDst...) {
 			findings = append(findings, Finding{
 				Type:          "invalid_cidr",
@@ -158,13 +165,14 @@ func analyze(p Policy) []Finding {
 		key := fmt.Sprintf("%s|%s|%s|%s|%s",
 			r1.Src, r1.Dst, r1.Port, r1.Protocol, r1.Action)
 
+		// Duplicate detection
 		if prev, exists := seen[key]; exists {
 			f = append(f, Finding{
 				Type:          "duplicate",
 				Severity:      "medium",
 				Message:       fmt.Sprintf("Rule '%s' duplicates '%s'.", r1.Name, prev),
 				Justified:     r1.Justified,
-				Justification: r1.Justification,
+				Justification: r1.Justification, // duplicate rule = impacted
 				Suggestion:    "Remove duplicate.",
 			})
 		} else {
@@ -174,44 +182,52 @@ func analyze(p Policy) []Finding {
 		for j := i + 1; j < len(rules); j++ {
 			r2 := rules[j]
 
-			if r1.Priority > r2.Priority {
-				r1, r2 = r2, r1
+			// Only compare overlapping rules
+			if !overlaps(r1, r2) {
+				continue
 			}
 
-			if r1.Protocol != r2.Protocol && r1.Protocol != "Any" && r2.Protocol != "Any" {
+			// Determine priority safely
+			a, b := r1, r2
+			if a.Priority > b.Priority {
+				a, b = b, a
+			}
+
+			// Protocol mismatch (impact = b)
+			if a.Protocol != b.Protocol && a.Protocol != "Any" && b.Protocol != "Any" {
 				f = append(f, Finding{
 					Type:          "protocol_mismatch",
 					Severity:      "low",
-					Message:       fmt.Sprintf("Rules '%s' and '%s' use different protocols.", r1.Name, r2.Name),
-					Justified:     r2.Justified,
-					Justification: r2.Justification,
+					Message:       fmt.Sprintf("Rules '%s' and '%s' use different protocols.", a.Name, b.Name),
+					Justified:     b.Justified,
+					Justification: b.Justification,
 					Suggestion:    "Align protocol.",
 				})
 			}
 
-			if r1.Src.IsValid() && r2.Src.IsValid() &&
-				r1.Dst.IsValid() && r2.Dst.IsValid() &&
-				r1.Src.Contains(r2.Src.Addr()) &&
-				r1.Dst.Contains(r2.Dst.Addr()) &&
-				r1.Port == r2.Port {
+			// Shadow detection (impact = b)
+			if a.Src.Contains(b.Src.Addr()) &&
+				a.Dst.Contains(b.Dst.Addr()) &&
+				a.Port == b.Port {
 
 				sev := "medium"
-				if r1.Action != r2.Action {
+				if a.Action != b.Action {
 					sev = "high"
 				}
 
 				f = append(f, Finding{
 					Type:          "shadowed",
 					Severity:      sev,
-					Message:       fmt.Sprintf("Rule '%s' is shadowed by '%s'.", r2.Name, r1.Name),
-					Justified:     r2.Justified,
-					Justification: r2.Justification,
+					Message:       fmt.Sprintf("Rule '%s' is shadowed by '%s'.", b.Name, a.Name),
+					Justified:     b.Justified,
+					Justification: b.Justification,
 					Suggestion:    "Adjust priority.",
 				})
 			}
 		}
 	}
 
+	// App rules
 	for _, r := range p.AppRules {
 		for _, fqdn := range r.FQDNs {
 
