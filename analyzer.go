@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/netip"
-	"strings"
 )
 
 type Policy struct {
