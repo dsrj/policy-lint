@@ -5,6 +5,7 @@ on: [push, pull_request]
 jobs:
   lint:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -14,17 +15,9 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Force Rebuild Module and Binary
+      - name: Build Provider
         run: |
-          # 1. Clean existing module files to prevent parsing errors
-          rm -f go.mod go.sum
-          
-          # 2. Re-initialize and fetch dependencies via CLI
-          go mod init terraform-provider-fw-analyzer
-          go get ://github.com
           go mod tidy
-          
-          # 3. Build the binary
           go build -o terraform-provider-fw-analyzer
           chmod +x terraform-provider-fw-analyzer
 
@@ -35,7 +28,6 @@ jobs:
 
       - name: Create Global CLI Config
         run: |
-          # Use absolute path to GITHUB_WORKSPACE to avoid '~' expansion issues
           cat <<EOF > $HOME/.terraformrc
           provider_installation {
             dev_overrides {
@@ -45,11 +37,12 @@ jobs:
           }
           EOF
 
+      - name: Terraform Init
+        run: |
+          export TF_CLI_CONFIG_FILE=$HOME/.terraformrc
+          terraform init
+
       - name: Terraform Plan (Lint)
         run: |
-          # Explicitly point to the config file and run plan
           export TF_CLI_CONFIG_FILE=$HOME/.terraformrc
-          
-          # We use -detailed-exitcode: 
-          # 0=no changes, 2=changes (normal for data source), 1=error
-          terraform plan -no-color
+          terraform plan -no-color -detailed-exitcode
