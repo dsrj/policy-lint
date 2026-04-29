@@ -18,7 +18,8 @@ jobs:
       - name: Build Provider
         run: |
           go mod tidy
-          go build -o terraform-provider-fw-analyzer
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o terraform-provider-fw-analyzer
+
           chmod +x terraform-provider-fw-analyzer
 
       - name: Setup Terraform
