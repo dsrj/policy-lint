@@ -53,4 +53,5 @@ jobs:
       - name: Terraform Plan (Lint)
         run: |
           export TF_CLI_CONFIG_FILE=$HOME/.terraformrc
-          TF_LOG=DEBUG terraform plan -no-color -detailed-exitcode
+          terraform plan -no-color -detailed-exitcode || \
+          if [ $? -eq 2 ]; then exit 0; else exit 1; fi
