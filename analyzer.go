@@ -33,22 +33,24 @@ type AppRule struct {
 }
 
 type RuleFlat struct {
-	Name      string
-	Priority  int
-	Action    string
-	Src       netip.Prefix
-	Dst       netip.Prefix
-	Port      string
-	Protocol  string
-	Justified bool
+	Name          string
+	Priority      int
+	Action        string
+	Src           netip.Prefix
+	Dst           netip.Prefix
+	Port          string
+	Protocol      string
+	Justified     bool
+	Justification string
 }
 
 type Finding struct {
-	Type       string `tfsdk:"type"`
-	Severity   string `tfsdk:"severity"`
-	Message    string `tfsdk:"message"`
-	Justified  bool   `tfsdk:"justified"`
-	Suggestion string `tfsdk:"suggestion"`
+	Type          string `tfsdk:"type"`
+	Severity      string `tfsdk:"severity"`
+	Message       string `tfsdk:"message"`
+	Justified     bool   `tfsdk:"justified"`
+	Justification string `tfsdk:"justification"`
+	Suggestion    string `tfsdk:"suggestion"`
 }
 
 func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []string) {
@@ -84,22 +86,24 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 
 		if len(r.Ports) == 0 {
 			findings = append(findings, Finding{
-				Type:       "empty_ports",
-				Severity:   "medium",
-				Message:    fmt.Sprintf("Rule '%s' has no ports defined and will not match traffic.", r.Name),
-				Justified:  r.Justification != "",
-				Suggestion: "Define required ports (e.g., 80, 443) or remove the rule.",
+				Type:          "empty_ports",
+				Severity:      "medium",
+				Message:       fmt.Sprintf("Rule '%s' has no ports defined.", r.Name),
+				Justified:     r.Justification != "",
+				Justification: r.Justification,
+				Suggestion:    "Define ports or remove rule.",
 			})
 		}
 
 		for _, port := range r.Ports {
 			if port == "*" {
 				findings = append(findings, Finding{
-					Type:       "overly_permissive",
-					Severity:   "high",
-					Message:    fmt.Sprintf("Rule '%s' allows all ports ('*'), which is overly permissive.", r.Name),
-					Justified:  r.Justification != "",
-					Suggestion: "Restrict ports to only necessary ones.",
+					Type:          "overly_permissive",
+					Severity:      "high",
+					Message:       fmt.Sprintf("Rule '%s' allows all ports.", r.Name),
+					Justified:     r.Justification != "",
+					Justification: r.Justification,
+					Suggestion:    "Restrict ports.",
 				})
 			}
 		}
@@ -109,11 +113,12 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 
 		for _, bad := range append(invalidSrc, invalidDst...) {
 			findings = append(findings, Finding{
-				Type:       "invalid_cidr",
-				Severity:   "high",
-				Message:    fmt.Sprintf("Rule '%s' contains invalid CIDR/IP '%s'.", r.Name, bad),
-				Justified:  r.Justification != "",
-				Suggestion: "Fix CIDR format (e.g., 10.0.0.0/24).",
+				Type:          "invalid_cidr",
+				Severity:      "high",
+				Message:       fmt.Sprintf("Rule '%s' has invalid CIDR '%s'.", r.Name, bad),
+				Justified:     r.Justification != "",
+				Justification: r.Justification,
+				Suggestion:    "Fix CIDR format.",
 			})
 		}
 
@@ -121,9 +126,15 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 			for _, d := range dsts {
 				for _, port := range r.Ports {
 					result = append(result, RuleFlat{
-						Name: r.Name, Priority: r.Priority, Action: r.Action,
-						Src: s, Dst: d, Port: port, Protocol: r.Protocol,
-						Justified: r.Justification != "",
+						Name:          r.Name,
+						Priority:      r.Priority,
+						Action:        r.Action,
+						Src:           s,
+						Dst:           d,
+						Port:          port,
+						Protocol:      r.Protocol,
+						Justified:     r.Justification != "",
+						Justification: r.Justification,
 					})
 				}
 			}
@@ -149,11 +160,12 @@ func analyze(p Policy) []Finding {
 
 		if prev, exists := seen[key]; exists {
 			f = append(f, Finding{
-				Type:       "duplicate",
-				Severity:   "medium",
-				Message:    fmt.Sprintf("Rule '%s' duplicates rule '%s'.", r1.Name, prev),
-				Justified:  r1.Justified,
-				Suggestion: "Remove duplicate rule.",
+				Type:          "duplicate",
+				Severity:      "medium",
+				Message:       fmt.Sprintf("Rule '%s' duplicates '%s'.", r1.Name, prev),
+				Justified:     r1.Justified,
+				Justification: r1.Justification,
+				Suggestion:    "Remove duplicate.",
 			})
 		} else {
 			seen[key] = r1.Name
@@ -168,11 +180,12 @@ func analyze(p Policy) []Finding {
 
 			if r1.Protocol != r2.Protocol && r1.Protocol != "Any" && r2.Protocol != "Any" {
 				f = append(f, Finding{
-					Type:       "protocol_mismatch",
-					Severity:   "low",
-					Message:    fmt.Sprintf("Rules '%s' and '%s' overlap but use different protocols.", r1.Name, r2.Name),
-					Justified:  r2.Justified,
-					Suggestion: "Ensure consistent protocol usage.",
+					Type:          "protocol_mismatch",
+					Severity:      "low",
+					Message:       fmt.Sprintf("Rules '%s' and '%s' use different protocols.", r1.Name, r2.Name),
+					Justified:     r2.Justified,
+					Justification: r2.Justification,
+					Suggestion:    "Align protocol.",
 				})
 			}
 
@@ -188,11 +201,12 @@ func analyze(p Policy) []Finding {
 				}
 
 				f = append(f, Finding{
-					Type:       "shadowed",
-					Severity:   sev,
-					Message:    fmt.Sprintf("Rule '%s' is shadowed by '%s' and will never be hit.", r2.Name, r1.Name),
-					Justified:  r2.Justified,
-					Suggestion: "Adjust priority or remove redundant rule.",
+					Type:          "shadowed",
+					Severity:      sev,
+					Message:       fmt.Sprintf("Rule '%s' is shadowed by '%s'.", r2.Name, r1.Name),
+					Justified:     r2.Justified,
+					Justification: r2.Justification,
+					Suggestion:    "Adjust priority.",
 				})
 			}
 		}
@@ -203,21 +217,23 @@ func analyze(p Policy) []Finding {
 
 			if fqdn == "*" {
 				f = append(f, Finding{
-					Type:       "wildcard",
-					Severity:   "high",
-					Message:    fmt.Sprintf("Rule '%s' allows all domains ('*').", r.Name),
-					Justified:  r.Justification != "",
-					Suggestion: "Restrict to specific domains.",
+					Type:          "wildcard",
+					Severity:      "high",
+					Message:       fmt.Sprintf("Rule '%s' allows all domains.", r.Name),
+					Justified:     r.Justification != "",
+					Justification: r.Justification,
+					Suggestion:    "Restrict domains.",
 				})
 			}
 
 			if strings.Contains(fqdn, "://") {
 				f = append(f, Finding{
-					Type:       "invalid_fqdn",
-					Severity:   "medium",
-					Message:    fmt.Sprintf("Rule '%s' has invalid FQDN '%s'.", r.Name, fqdn),
-					Justified:  r.Justification != "",
-					Suggestion: "Use valid domain (example.com).",
+					Type:          "invalid_fqdn",
+					Severity:      "medium",
+					Message:       fmt.Sprintf("Rule '%s' has invalid FQDN '%s'.", r.Name, fqdn),
+					Justified:     r.Justification != "",
+					Justification: r.Justification,
+					Suggestion:    "Fix domain format.",
 				})
 			}
 		}
