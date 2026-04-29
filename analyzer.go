@@ -90,25 +90,49 @@ func flatten(p Policy) []RuleFlat {
 func analyze(p Policy) []Finding {
 	var f []Finding
 	rules := flatten(p)
+
 	for i := 0; i < len(rules); i++ {
 		for j := i + 1; j < len(rules); j++ {
 			r1, r2 := rules[i], rules[j]
-			if r1.Priority > r2.Priority { r1, r2 = r2, r1 }
 
-			// Shadow check
-			if r1.Src.Contains(r2.Src.Addr()) && r1.Dst.Contains(r2.Dst.Addr()) && r1.Port == r2.Port {
+			if r1.Priority > r2.Priority {
+				r1, r2 = r2, r1
+			}
+
+			// ✅ SAFE Shadow check (prevents panic)
+			if r1.Src.IsValid() && r2.Src.IsValid() &&
+				r1.Dst.IsValid() && r2.Dst.IsValid() &&
+				r1.Src.Contains(r2.Src.Addr()) &&
+				r1.Dst.Contains(r2.Dst.Addr()) &&
+				r1.Port == r2.Port {
+
 				sev := "medium"
-				if r1.Action != r2.Action { sev = "high" }
-				f = append(f, Finding{"shadowed", sev, fmt.Sprintf("%s shadowed by %s", r2.Name, r1.Name), r2.Justified})
+				if r1.Action != r2.Action {
+					sev = "high"
+				}
+
+				f = append(f, Finding{
+					Type:      "shadowed",
+					Severity:  sev,
+					Message:   fmt.Sprintf("%s shadowed by %s", r2.Name, r1.Name),
+					Justified: r2.Justified,
+				})
 			}
 		}
 	}
+
 	for _, r := range p.AppRules {
 		for _, fqdn := range r.FQDNs {
 			if fqdn == "*" {
-				f = append(f, Finding{"wildcard", "high", r.Name + " has * wildcard", r.Justification != ""})
+				f = append(f, Finding{
+					Type:      "wildcard",
+					Severity:  "high",
+					Message:   r.Name + " has * wildcard",
+					Justified: r.Justification != "",
+				})
 			}
 		}
 	}
+
 	return f
 }
