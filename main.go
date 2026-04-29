@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"://github.com"
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 )
 
 func main() {
