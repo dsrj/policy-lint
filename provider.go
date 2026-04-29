@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
-"github.com/hashicorp/terraform-plugin-framework/datasource"
-"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
+
+// ✅ Compile-time check (prevents silent runtime crash)
+var _ provider.Provider = &fwProvider{}
 
 type fwProvider struct{}
 
@@ -15,6 +18,7 @@ func NewProvider() provider.Provider {
 }
 
 func (p *fwProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
+	// MUST match your Terraform provider name
 	resp.TypeName = "fw-analyzer"
 }
 
@@ -29,5 +33,5 @@ func (p *fwProvider) DataSources(_ context.Context) []func() datasource.DataSour
 }
 
 func (p *fwProvider) Resources(_ context.Context) []func() resource.Resource {
-	return []func() resource.Resource{}
+	return nil
 }
