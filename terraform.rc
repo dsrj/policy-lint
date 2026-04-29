@@ -1,0 +1,6 @@
+provider_installation {
+  dev_overrides {
+    "local/fw-analyzer" = "C:/lint"
+  }
+  direct {}
+}

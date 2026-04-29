@@ -1,0 +1,52 @@
+{
+  "ip_groups": {
+    "prod_networks": ["10.0.0.0/16", "10.1.0.0/16"],
+    "critical_db": ["10.0.5.5/32"]
+  },
+  "network_rules": [
+    {
+      "name": "block_all_prod",
+      "priority": 100,
+      "action": "deny",
+      "source": ["prod_networks"],
+      "destination": ["0.0.0.0/0"],
+      "ports": ["*"],
+      "protocol": "Any"
+    },
+    {
+      "name": "redundant_allow_db",
+      "priority": 200,
+      "action": "allow",
+      "source": ["critical_db"],
+      "destination": ["0.0.0.0/0"],
+      "ports": ["443"],
+      "protocol": "TCP",
+      "justification": "This is shadowed by Rule 100, but we justified it."
+    },
+    {
+      "name": "partial_overlap_rule",
+      "priority": 300,
+      "action": "allow",
+      "source": ["10.0.0.0/8"],
+      "destination": ["8.8.8.8/32"],
+      "ports": ["53"],
+      "protocol": "UDP"
+    }
+  ],
+  "app_rules": [
+    {
+      "name": "dangerous_wildcard",
+      "priority": 1000,
+      "action": "allow",
+      "source": ["10.0.0.0/24"],
+      "fqdns": ["*"]
+    },
+    {
+      "name": "specific_google",
+      "priority": 1100,
+      "action": "allow",
+      "source": ["10.0.0.0/24"],
+      "fqdns": ["://google.com"]
+    }
+  ]
+}
