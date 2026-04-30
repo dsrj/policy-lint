@@ -48,7 +48,7 @@ type Finding struct {
 	RuleName      string `tfsdk:"rule_name"`
 	Type          string `tfsdk:"type"`
 	Severity      string `tfsdk:"severity"`
-	Status        string `tfsdk:"status"` // valid / invalid
+	Status        string `tfsdk:"status"`
 	Message       string `tfsdk:"message"`
 	Details       string `tfsdk:"details"`
 	ComparedWith  string `tfsdk:"compared_with"`
@@ -82,7 +82,6 @@ func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []str
 			}
 		}
 	}
-
 	return out, invalid
 }
 
@@ -164,24 +163,23 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 func analyze(p Policy) []Finding {
 	var f []Finding
 
-	rules, baseFindings := flatten(p)
-	f = append(f, baseFindings...)
+	rules, base := flatten(p)
+	f = append(f, base...)
 
 	seen := map[string]string{}
-	ruleValidity := map[string]bool{}
+	validMap := map[string]bool{}
 
 	for _, r := range rules {
-		ruleValidity[r.Name] = true
+		validMap[r.Name] = true
 	}
 
 	for i := 0; i < len(rules); i++ {
 		r1 := rules[i]
 
-		key := fmt.Sprintf("%s|%s|%s|%s|%s",
-			r1.Src, r1.Dst, r1.Port, r1.Protocol, r1.Action)
+		key := fmt.Sprintf("%s|%s|%s|%s|%s", r1.Src, r1.Dst, r1.Port, r1.Protocol, r1.Action)
 
 		if prev, exists := seen[key]; exists {
-			ruleValidity[r1.Name] = false
+			validMap[r1.Name] = false
 			f = append(f, Finding{
 				RuleName:      r1.Name,
 				Type:          "duplicate",
@@ -211,7 +209,7 @@ func analyze(p Policy) []Finding {
 			}
 
 			if a.Protocol != b.Protocol && a.Protocol != "Any" && b.Protocol != "Any" {
-				ruleValidity[b.Name] = false
+				validMap[b.Name] = false
 				f = append(f, Finding{
 					RuleName:      b.Name,
 					Type:          "protocol_mismatch",
@@ -226,22 +224,13 @@ func analyze(p Policy) []Finding {
 				})
 			}
 
-			if a.Src.Contains(b.Src.Addr()) &&
-				a.Dst.Contains(b.Dst.Addr()) &&
-				a.Port == b.Port {
-
-				ruleValidity[b.Name] = false
-
-				sev := "medium"
-				if a.Action != b.Action {
-					sev = "high"
-				}
-
+			if a.Src.Contains(b.Src.Addr()) && a.Dst.Contains(b.Dst.Addr()) && a.Port == b.Port {
+				validMap[b.Name] = false
 				f = append(f, Finding{
 					RuleName:      b.Name,
 					Type:          "shadowed",
 					Status:        "invalid",
-					Severity:      sev,
+					Severity:      "medium",
 					Message:       "Rule is shadowed",
 					Details:       fmt.Sprintf("src:%s dst:%s port:%s", b.Src, b.Dst, b.Port),
 					ComparedWith:  a.Name,
@@ -253,50 +242,18 @@ func analyze(p Policy) []Finding {
 		}
 	}
 
-	for _, r := range p.AppRules {
-		for _, fqdn := range r.FQDNs {
-
-			if fqdn == "*" {
-				ruleValidity[r.Name] = false
-				f = append(f, Finding{
-					RuleName:      r.Name,
-					Type:          "wildcard",
-					Status:        "invalid",
-					Severity:      "high",
-					Message:       "Allows all domains",
-					Details:       "*",
-					Justified:     r.Justification != "",
-					Justification: r.Justification,
-					Suggestion:    "Restrict domains",
-				})
-			}
-
-			if strings.Contains(fqdn, "://") {
-				ruleValidity[r.Name] = false
-				f = append(f, Finding{
-					RuleName:      r.Name,
-					Type:          "invalid_fqdn",
-					Status:        "invalid",
-					Severity:      "medium",
-					Message:       "Invalid FQDN",
-					Details:       fqdn,
-					Justified:     r.Justification != "",
-					Justification: r.Justification,
-					Suggestion:    "Fix domain",
-				})
-			}
-		}
-	}
-
-	// Add VALID rules
-	for rule, valid := range ruleValidity {
-		if valid {
+	for _, r := range rules {
+		if validMap[r.Name] {
 			f = append(f, Finding{
-				RuleName: rule,
-				Type:     "valid",
-				Status:   "valid",
-				Severity: "info",
-				Message:  "Rule is valid",
+				RuleName:      r.Name,
+				Type:          "valid",
+				Status:        "valid",
+				Severity:      "info",
+				Message:       "Rule is valid and not conflicting",
+				Details:       fmt.Sprintf("src:%s dst:%s port:%s protocol:%s action:%s", r.Src, r.Dst, r.Port, r.Protocol, r.Action),
+				Justified:     r.Justified,
+				Justification: r.Justification,
+				Suggestion:    "No action needed",
 			})
 		}
 	}
