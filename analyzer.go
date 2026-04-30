@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/netip"
 	"sort"
@@ -52,7 +51,7 @@ type AppRule struct {
 	Priority      int      `json:"priority"`
 	Source        []string `json:"source"`
 	FQDNs         []string `json:"fqdns"`
-	ResolvedIPs   []string `json:"resolved_ips"` // ✅ NEW
+	ResolvedIPs   []string `json:"resolved_ips"`
 	Justification string   `json:"justification"`
 }
 
@@ -60,45 +59,51 @@ type RuleFlat struct {
 	Name            string
 	Type            string
 	Action          string
-	Priority        int
-	GroupPriority   int
-	CollectionPrio  int
-	Src             netip.Prefix
-	Dst             netip.Prefix
-	SrcRaw          string
-	DstRaw          string
+	Src             string
+	Dst             string
 	Port            string
 	Protocol        string
 	FQDN            string
-	ResolvedIPs     []netip.Addr
+	IPs             []netip.Addr
+
+	RulePriority    int
+	CollectionName  string
+	CollectionPrio  int
+	RCGName         string
+	RCGPriority     int
+
 	ProcessingOrder int64
 	Justified       bool
 	Justification   string
 }
 
 type Finding struct {
-	RuleName        string `tfsdk:"rule_name"`
-	Type            string `tfsdk:"type"`
-	Status          string `tfsdk:"status"`
-	Severity        string `tfsdk:"severity"`
-	Message         string `tfsdk:"message"`
-	Details         string `tfsdk:"details"`
-	ComparedWith    string `tfsdk:"compared_with"`
-	ProcessingOrder int64  `tfsdk:"processing_order"`
-	Justified       bool   `tfsdk:"justified"`
-	Justification   string `tfsdk:"justification"`
-	Suggestion      string `tfsdk:"suggestion"`
+	RuleName           string `tfsdk:"rule_name"`
+	Type               string `tfsdk:"type"`
+	Status             string `tfsdk:"status"`
+	Severity           string `tfsdk:"severity"`
+	Message            string `tfsdk:"message"`
+
+	Source             string `tfsdk:"source"`
+	Destination        string `tfsdk:"destination"`
+	Port               string `tfsdk:"port"`
+	Protocol           string `tfsdk:"protocol"`
+
+	RulePriority       int    `tfsdk:"rule_priority"`
+	CollectionName     string `tfsdk:"collection_name"`
+	CollectionPriority int    `tfsdk:"collection_priority"`
+	RCGName            string `tfsdk:"rcg_name"`
+	RCGPriority        int    `tfsdk:"rcg_priority"`
+
+	ComparedWith       string `tfsdk:"compared_with"`
+	ProcessingOrder    int64  `tfsdk:"processing_order"`
+
+	Justified          bool   `tfsdk:"justified"`
+	Justification      string `tfsdk:"justification"`
+	Suggestion         string `tfsdk:"suggestion"`
 }
 
-func isPrivateIP(ip netip.Addr) bool {
-	return ip.IsPrivate()
-}
-
-func isFQDN(s string) bool {
-	return strings.Contains(s, ".") && !strings.Contains(s, "/")
-}
-
-func resolveFQDNWithDNS(fqdn string, dnsServers []string) []netip.Addr {
+func resolveFQDN(fqdn string, dnsServers []string) []netip.Addr {
 	var results []netip.Addr
 
 	for _, dns := range dnsServers {
@@ -133,75 +138,79 @@ func resolveFQDNWithDNS(fqdn string, dnsServers []string) []netip.Addr {
 	return results
 }
 
-func parseResolvedIPs(ipStrs []string) []netip.Addr {
-	var result []netip.Addr
-	for _, s := range ipStrs {
+func parseIPs(strs []string) []netip.Addr {
+	var out []netip.Addr
+	for _, s := range strs {
 		if ip, err := netip.ParseAddr(s); err == nil {
-			result = append(result, ip)
+			out = append(out, ip)
 		}
 	}
-	return result
+	return out
 }
 
-func buildRules(p Policy, findings *[]Finding) []RuleFlat {
+func buildRules(p Policy) []RuleFlat {
 	var rules []RuleFlat
 
 	for _, rcg := range p.RuleCollectionGroups {
+
+		for _, col := range rcg.NetworkRuleCollections {
+			for _, r := range col.Rules {
+				for _, s := range r.Source {
+					for _, d := range r.Destination {
+						for _, port := range r.Ports {
+
+							rules = append(rules, RuleFlat{
+								Name:           r.Name,
+								Type:           "network",
+								Action:         col.Action,
+								Src:            s,
+								Dst:            d,
+								Port:           port,
+								Protocol:       r.Protocol,
+
+								RulePriority:   r.Priority,
+								CollectionName: col.Name,
+								CollectionPrio: col.Priority,
+								RCGName:        rcg.Name,
+								RCGPriority:    rcg.Priority,
+
+								Justified:      r.Justification != "",
+								Justification:  r.Justification,
+							})
+						}
+					}
+				}
+			}
+		}
 
 		for _, col := range rcg.AppRuleCollections {
 			for _, r := range col.Rules {
 
 				for _, fqdn := range r.FQDNs {
 
-					var resolved []netip.Addr
-
-					// ✅ PRIORITY: JSON > DNS
+					var ips []netip.Addr
 					if len(r.ResolvedIPs) > 0 {
-						resolved = parseResolvedIPs(r.ResolvedIPs)
-
-						// Compare with DNS
-						dnsIPs := resolveFQDNWithDNS(fqdn, p.DNSServers)
-
-						if len(dnsIPs) > 0 && !compareIPSets(resolved, dnsIPs) {
-							*findings = append(*findings, Finding{
-								RuleName:   r.Name,
-								Type:       "dns_mismatch",
-								Status:     "warning",
-								Severity:   "medium",
-								Message:    "Resolved IPs differ from DNS",
-								Details:    fmt.Sprintf("expected:%v actual:%v", resolved, dnsIPs),
-								Suggestion: "Verify DNS consistency",
-							})
-						}
-
+						ips = parseIPs(r.ResolvedIPs)
 					} else {
-						resolved = resolveFQDNWithDNS(fqdn, p.DNSServers)
-					}
-
-					// Private IP check
-					for _, ip := range resolved {
-						if isPrivateIP(ip) {
-							*findings = append(*findings, Finding{
-								RuleName:   r.Name,
-								Type:       "private_fqdn",
-								Status:     "invalid",
-								Severity:   "high",
-								Message:    "FQDN resolves to private IP",
-								Details:    fmt.Sprintf("%s → %s", fqdn, ip),
-								Suggestion: "Use network rule",
-							})
-						}
+						ips = resolveFQDN(fqdn, p.DNSServers)
 					}
 
 					rules = append(rules, RuleFlat{
-						Name:          r.Name,
-						Type:          "app",
-						Action:        col.Action,
-						Priority:      r.Priority,
-						GroupPriority: rcg.Priority,
+						Name:           r.Name,
+						Type:           "app",
+						Action:         col.Action,
+						Src:            strings.Join(r.Source, ","),
+						FQDN:           fqdn,
+						IPs:            ips,
+
+						RulePriority:   r.Priority,
+						CollectionName: col.Name,
 						CollectionPrio: col.Priority,
-						FQDN:          fqdn,
-						ResolvedIPs:   resolved,
+						RCGName:        rcg.Name,
+						RCGPriority:    rcg.Priority,
+
+						Justified:      r.Justification != "",
+						Justification:  r.Justification,
 					})
 				}
 			}
@@ -209,7 +218,13 @@ func buildRules(p Policy, findings *[]Finding) []RuleFlat {
 	}
 
 	sort.Slice(rules, func(i, j int) bool {
-		return rules[i].Priority < rules[j].Priority
+		if rules[i].RCGPriority != rules[j].RCGPriority {
+			return rules[i].RCGPriority < rules[j].RCGPriority
+		}
+		if rules[i].CollectionPrio != rules[j].CollectionPrio {
+			return rules[i].CollectionPrio < rules[j].CollectionPrio
+		}
+		return rules[i].RulePriority < rules[j].RulePriority
 	})
 
 	for i := range rules {
@@ -219,24 +234,57 @@ func buildRules(p Policy, findings *[]Finding) []RuleFlat {
 	return rules
 }
 
-func compareIPSets(a, b []netip.Addr) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	m := map[string]bool{}
-	for _, ip := range a {
-		m[ip.String()] = true
-	}
-	for _, ip := range b {
-		if !m[ip.String()] {
-			return false
+func analyze(p Policy) []Finding {
+	var findings []Finding
+	rules := buildRules(p)
+
+	for i := range rules {
+		curr := rules[i]
+
+		for j := 0; j < i; j++ {
+			prev := rules[j]
+
+			if curr.Type == "app" && prev.Type == "network" {
+
+				for _, ip := range curr.IPs {
+
+					if strings.Contains(prev.Dst, ip.String()) || prev.Dst == "0.0.0.0/0" {
+
+						msg := "FQDN overlaps with network rule"
+						if prev.Action != curr.Action {
+							msg = "Conflict between app and network rule"
+						}
+
+						findings = append(findings, Finding{
+							RuleName:           curr.Name,
+							Type:               "fqdn_network_overlap",
+							Status:             "invalid",
+							Severity:           "high",
+							Message:            msg,
+
+							Source:             curr.Src,
+							Destination:        curr.FQDN,
+							Port:               curr.Port,
+							Protocol:           curr.Protocol,
+
+							RulePriority:       curr.RulePriority,
+							CollectionName:     curr.CollectionName,
+							CollectionPriority: curr.CollectionPrio,
+							RCGName:            curr.RCGName,
+							RCGPriority:        curr.RCGPriority,
+
+							ComparedWith:       prev.Name,
+							ProcessingOrder:    curr.ProcessingOrder,
+
+							Justified:          curr.Justified,
+							Justification:      curr.Justification,
+							Suggestion:         "Review rule ordering or remove overlap",
+						})
+					}
+				}
+			}
 		}
 	}
-	return true
-}
 
-func analyze(p Policy) []Finding {
-	var out []Finding
-	buildRules(p, &out)
-	return out
+	return findings
 }

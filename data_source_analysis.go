@@ -32,21 +32,26 @@ func (d *analysisDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 				NestedObject: datasourceschema.NestedAttributeObject{
 					Attributes: map[string]datasourceschema.Attribute{
 
-						// ✅ ADD THIS (FIX)
-						"processing_order": datasourceschema.Int64Attribute{
-							Computed: true,
-						},
-
-						// EXISTING
 						"rule_name": datasourceschema.StringAttribute{Computed: true},
+						"type":      datasourceschema.StringAttribute{Computed: true},
 						"status":    datasourceschema.StringAttribute{Computed: true},
-						"details":   datasourceschema.StringAttribute{Computed: true},
-						"compared_with": datasourceschema.StringAttribute{
-							Computed: true,
-						},
-						"type":          datasourceschema.StringAttribute{Computed: true},
-						"severity":      datasourceschema.StringAttribute{Computed: true},
-						"message":       datasourceschema.StringAttribute{Computed: true},
+						"severity":  datasourceschema.StringAttribute{Computed: true},
+						"message":   datasourceschema.StringAttribute{Computed: true},
+
+						"source":      datasourceschema.StringAttribute{Computed: true},
+						"destination": datasourceschema.StringAttribute{Computed: true},
+						"port":        datasourceschema.StringAttribute{Computed: true},
+						"protocol":    datasourceschema.StringAttribute{Computed: true},
+
+						"rule_priority":       datasourceschema.Int64Attribute{Computed: true},
+						"collection_name":     datasourceschema.StringAttribute{Computed: true},
+						"collection_priority": datasourceschema.Int64Attribute{Computed: true},
+						"rcg_name":            datasourceschema.StringAttribute{Computed: true},
+						"rcg_priority":        datasourceschema.Int64Attribute{Computed: true},
+
+						"compared_with":    datasourceschema.StringAttribute{Computed: true},
+						"processing_order": datasourceschema.Int64Attribute{Computed: true},
+
 						"justified":     datasourceschema.BoolAttribute{Computed: true},
 						"justification": datasourceschema.StringAttribute{Computed: true},
 						"suggestion":    datasourceschema.StringAttribute{Computed: true},
@@ -65,10 +70,6 @@ func (d *analysisDataSource) Read(ctx context.Context, req datasource.ReadReques
 
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	if data.PolicyJSON.IsNull() || data.PolicyJSON.IsUnknown() {
 		return
 	}
 
