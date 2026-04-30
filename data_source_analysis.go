@@ -11,7 +11,6 @@ import (
 
 type analysisDataSource struct{}
 
-// Compile-time check
 var _ datasource.DataSource = &analysisDataSource{}
 
 func NewAnalysisDataSource() datasource.DataSource {
@@ -35,17 +34,20 @@ func (d *analysisDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 				NestedObject: datasourceschema.NestedAttributeObject{
 					Attributes: map[string]datasourceschema.Attribute{
 
+						// Core
 						"rule_name": datasourceschema.StringAttribute{Computed: true},
 						"type":      datasourceschema.StringAttribute{Computed: true},
 						"status":    datasourceschema.StringAttribute{Computed: true},
 						"severity":  datasourceschema.StringAttribute{Computed: true},
 						"message":   datasourceschema.StringAttribute{Computed: true},
 
+						// Traffic details
 						"source":      datasourceschema.StringAttribute{Computed: true},
 						"destination": datasourceschema.StringAttribute{Computed: true},
 						"port":        datasourceschema.StringAttribute{Computed: true},
 						"protocol":    datasourceschema.StringAttribute{Computed: true},
 
+						// Priority
 						"rule_priority":       datasourceschema.Int64Attribute{Computed: true},
 						"collection_name":     datasourceschema.StringAttribute{Computed: true},
 						"collection_priority": datasourceschema.Int64Attribute{Computed: true},
@@ -54,18 +56,23 @@ func (d *analysisDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 
 						"processing_order": datasourceschema.Int64Attribute{Computed: true},
 
-						// 🔥 Priority visibility
+						// Evaluation path
 						"priority_path":   datasourceschema.StringAttribute{Computed: true},
 						"evaluation_path": datasourceschema.StringAttribute{Computed: true},
 
-						// 🔥 Comparison info
+						// Comparison
 						"compared_with": datasourceschema.StringAttribute{Computed: true},
 						"overlap_type":  datasourceschema.StringAttribute{Computed: true},
 
-						// 🔥 Justification support
+						// Justification
 						"justified":     datasourceschema.BoolAttribute{Computed: true},
 						"justification": datasourceschema.StringAttribute{Computed: true},
 
+						// Outcome (🔥 FIXED — added)
+						"effective_action": datasourceschema.StringAttribute{Computed: true},
+						"hit_rule":         datasourceschema.StringAttribute{Computed: true},
+
+						// Recommendation
 						"suggestion": datasourceschema.StringAttribute{Computed: true},
 					},
 				},
@@ -81,13 +88,12 @@ func (d *analysisDataSource) Read(ctx context.Context, req datasource.ReadReques
 		Findings   []Finding    `tfsdk:"findings"`
 	}
 
-	// Read config
+	// Read input
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	// Guard null
 	if data.PolicyJSON.IsNull() || data.PolicyJSON.IsUnknown() {
 		return
 	}
@@ -95,20 +101,20 @@ func (d *analysisDataSource) Read(ctx context.Context, req datasource.ReadReques
 	// Parse JSON
 	var policy Policy
 	if err := json.Unmarshal([]byte(data.PolicyJSON.ValueString()), &policy); err != nil {
-		resp.Diagnostics.AddError("JSON Error", err.Error())
+		resp.Diagnostics.AddError("Invalid JSON", err.Error())
 		return
 	}
 
-	// Protect against panic
+	// Safety against panic
 	defer func() {
 		if r := recover(); r != nil {
-			resp.Diagnostics.AddError("Analyzer Panic", "Analyzer crashed during execution")
+			resp.Diagnostics.AddError("Analyzer Panic", "Analyzer crashed unexpectedly")
 		}
 	}()
 
 	// Run analysis
 	data.Findings = analyze(policy)
 
-	// Set state
+	// Save state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
