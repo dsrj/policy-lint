@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+///////////////////////////
+// MODELS
+///////////////////////////
+
 type Policy struct {
 	IPGroups             map[string][]string   `json:"ip_groups"`
 	DNSServers           []string              `json:"dns_servers"`
@@ -57,78 +61,44 @@ type AppRule struct {
 }
 
 type RuleFlat struct {
-	Name           string
-	Type           string
-	Action         string
-	Src            string
-	Dst            string
-	Port           string
-	Protocol       string
-	FQDN           string
-	IPs            []netip.Addr
+	Name string
+	Type string
+	Action string
+	Src string
+	Dst string
+	FQDN string
+	IPs []netip.Addr
 
-	RulePriority   int
+	Port string
+	Protocol string
+
+	RulePriority int
 	CollectionName string
 	CollectionPrio int
-	RCGName        string
-	RCGPriority    int
+	RCGName string
+	RCGPriority int
 
 	ProcessingOrder int64
-	Justification   string
-}
-
-type Finding struct {
-	RuleName           string `tfsdk:"rule_name"`
-	Type               string `tfsdk:"type"`
-	Status             string `tfsdk:"status"`
-	Severity           string `tfsdk:"severity"`
-	Message            string `tfsdk:"message"`
-
-	Source             string `tfsdk:"source"`
-	Destination        string `tfsdk:"destination"`
-	Port               string `tfsdk:"port"`
-	Protocol           string `tfsdk:"protocol"`
-
-	RulePriority       int    `tfsdk:"rule_priority"`
-	CollectionName     string `tfsdk:"collection_name"`
-	CollectionPriority int    `tfsdk:"collection_priority"`
-	RCGName            string `tfsdk:"rcg_name"`
-	RCGPriority        int    `tfsdk:"rcg_priority"`
-
-	ProcessingOrder    int64  `tfsdk:"processing_order"`
-
-	PriorityPath       string `tfsdk:"priority_path"`
-	EvaluationPath     string `tfsdk:"evaluation_path"`
-
-	ComparedWith       string `tfsdk:"compared_with"`
-	OverlapType        string `tfsdk:"overlap_type"`
-
-	Justified          bool   `tfsdk:"justified"`
-	Justification      string `tfsdk:"justification"`
-
-	Suggestion         string `tfsdk:"suggestion"`
-
-	EffectiveAction    string `tfsdk:"effective_action"`
-	HitRule            string `tfsdk:"hit_rule"`
+	Justification string
 }
 
 ///////////////////////////
 // DNS
 ///////////////////////////
 
-func resolveFQDN(fqdn string, dnsServers []string) []netip.Addr {
-	var results []netip.Addr
+func resolveFQDN(fqdn string, dns []string) []netip.Addr {
+	var result []netip.Addr
 
-	for _, dns := range dnsServers {
-		resolver := &net.Resolver{
+	for _, d := range dns {
+		r := &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				return net.DialTimeout("udp", dns+":53", 3*time.Second)
+				return net.DialTimeout("udp", d+":53", 3*time.Second)
 			},
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		ips, err := resolver.LookupIP(ctx, "ip", fqdn)
+		ips, err := r.LookupIP(ctx, "ip", fqdn)
 		cancel()
 
 		if err != nil {
@@ -137,68 +107,47 @@ func resolveFQDN(fqdn string, dnsServers []string) []netip.Addr {
 
 		for _, ip := range ips {
 			if addr, err := netip.ParseAddr(ip.String()); err == nil {
-				results = append(results, addr)
+				result = append(result, addr)
 			}
 		}
-
-		if len(results) > 0 {
-			break
-		}
 	}
 
-	return results
-}
-
-func parseIPs(strs []string) []netip.Addr {
-	var out []netip.Addr
-	for _, s := range strs {
-		if ip, err := netip.ParseAddr(s); err == nil {
-			out = append(out, ip)
-		}
-	}
-	return out
+	return result
 }
 
 ///////////////////////////
-// CIDR ENGINE (IMPORTANT)
+// CIDR ENGINE
 ///////////////////////////
 
-func parsePrefixSafe(cidr string) (netip.Prefix, bool) {
-	p, err := netip.ParsePrefix(cidr)
+func parsePrefixSafe(c string) (netip.Prefix, bool) {
+	p, err := netip.ParsePrefix(c)
 	if err != nil {
 		return netip.Prefix{}, false
 	}
 	return p, true
 }
 
-func prefixContains(a, b netip.Prefix) bool {
-	return a.Contains(b.Addr()) && a.Bits() <= b.Bits()
-}
-
-func cidrRelation(aStr, bStr string) (string, bool) {
-	a, ok1 := parsePrefixSafe(aStr)
-	b, ok2 := parsePrefixSafe(bStr)
+func cidrRelation(a, b string) (string, bool) {
+	pa, ok1 := parsePrefixSafe(a)
+	pb, ok2 := parsePrefixSafe(b)
 	if !ok1 || !ok2 {
 		return "", false
 	}
 
-	if a == b {
+	if pa == pb {
 		return "exact", true
 	}
-
-	if prefixContains(a, b) {
+	if pa.Contains(pb.Addr()) && pa.Bits() <= pb.Bits() {
 		return "full", true
 	}
-
-	if a.Overlaps(b) {
+	if pa.Overlaps(pb) {
 		return "partial", true
 	}
-
 	return "", false
 }
 
 ///////////////////////////
-// BUILD RULES
+// BUILD RULES (WITH IP GROUP EXPANSION)
 ///////////////////////////
 
 func buildRules(p Policy) []RuleFlat {
@@ -208,29 +157,46 @@ func buildRules(p Policy) []RuleFlat {
 
 		for _, col := range rcg.NetworkRuleCollections {
 			for _, r := range col.Rules {
-				for _, s := range r.Source {
-					for _, d := range r.Destination {
-						for _, port := range r.Ports {
 
+				for _, d := range r.Destination {
+
+					// 🔥 IP GROUP EXPANSION
+					if group, ok := p.IPGroups[d]; ok {
+						for _, cidr := range group {
 							rules = append(rules, RuleFlat{
-								Name:           r.Name,
-								Type:           "network",
-								Action:         col.Action,
-								Src:            s,
-								Dst:            d,
-								Port:           port,
-								Protocol:       r.Protocol,
-
-								RulePriority:   r.Priority,
+								Name: r.Name,
+								Type: "network",
+								Action: col.Action,
+								Src: strings.Join(r.Source, ","),
+								Dst: cidr,
+								Port: r.Ports[0],
+								Protocol: r.Protocol,
+								RulePriority: r.Priority,
 								CollectionName: col.Name,
 								CollectionPrio: col.Priority,
-								RCGName:        rcg.Name,
-								RCGPriority:    rcg.Priority,
-
-								Justification:  r.Justification,
+								RCGName: rcg.Name,
+								RCGPriority: rcg.Priority,
+								Justification: r.Justification,
 							})
 						}
+						continue
 					}
+
+					rules = append(rules, RuleFlat{
+						Name: r.Name,
+						Type: "network",
+						Action: col.Action,
+						Src: strings.Join(r.Source, ","),
+						Dst: d,
+						Port: r.Ports[0],
+						Protocol: r.Protocol,
+						RulePriority: r.Priority,
+						CollectionName: col.Name,
+						CollectionPrio: col.Priority,
+						RCGName: rcg.Name,
+						RCGPriority: rcg.Priority,
+						Justification: r.Justification,
+					})
 				}
 			}
 		}
@@ -242,26 +208,27 @@ func buildRules(p Policy) []RuleFlat {
 
 					var ips []netip.Addr
 					if len(r.ResolvedIPs) > 0 {
-						ips = parseIPs(r.ResolvedIPs)
+						for _, ip := range r.ResolvedIPs {
+							addr, _ := netip.ParseAddr(ip)
+							ips = append(ips, addr)
+						}
 					} else {
 						ips = resolveFQDN(fqdn, p.DNSServers)
 					}
 
 					rules = append(rules, RuleFlat{
-						Name:           r.Name,
-						Type:           "app",
-						Action:         col.Action,
-						Src:            strings.Join(r.Source, ","),
-						FQDN:           fqdn,
-						IPs:            ips,
-
-						RulePriority:   r.Priority,
+						Name: r.Name,
+						Type: "app",
+						Action: col.Action,
+						Src: strings.Join(r.Source, ","),
+						FQDN: fqdn,
+						IPs: ips,
+						RulePriority: r.Priority,
 						CollectionName: col.Name,
 						CollectionPrio: col.Priority,
-						RCGName:        rcg.Name,
-						RCGPriority:    rcg.Priority,
-
-						Justification:  r.Justification,
+						RCGName: rcg.Name,
+						RCGPriority: rcg.Priority,
+						Justification: r.Justification,
 					})
 				}
 			}
@@ -286,7 +253,7 @@ func buildRules(p Policy) []RuleFlat {
 }
 
 ///////////////////////////
-// ANALYZE
+// ANALYZE (FINAL ENGINE)
 ///////////////////////////
 
 func analyze(p Policy) []Finding {
@@ -297,129 +264,120 @@ func analyze(p Policy) []Finding {
 		curr := rules[i]
 
 		status := "valid"
-		message := "Rule is valid"
 		severity := "info"
-		overlapType := ""
+		message := "Rule is valid"
 		var compared string
+		overlap := ""
 
-		effectiveAction := curr.Action
-		hitRule := curr.Name
+		effective := curr.Action
+		hit := curr.Name
 
-		for j := 0; j < i; j++ {
-			prev := rules[j]
+		//////////////// VALIDATION //////////////////
 
-			// -------- APP vs NETWORK --------
-			if curr.Type == "app" && prev.Type == "network" {
+		// ❌ Network FQDN
+		if curr.Type == "network" && strings.Contains(curr.Dst, ".") && !strings.Contains(curr.Dst, "/") {
+			status = "invalid"
+			severity = "high"
+			message = "FQDN not allowed in network rule"
+		}
 
-				for _, ip := range curr.IPs {
-
-					ipCIDR := netip.PrefixFrom(ip, 32).String()
-
-					if rel, ok := cidrRelation(prev.Dst, ipCIDR); ok {
-
-						compared = prev.Name
-						effectiveAction = prev.Action
-						hitRule = prev.Name
-
-						switch rel {
-						case "exact", "full":
-							if prev.Action != curr.Action {
-								status = "invalid"
-								severity = "high"
-								message = "Conflict (FQDN IP blocked by network rule)"
-							} else {
-								status = "invalid"
-								severity = "medium"
-								message = "FQDN fully shadowed"
-							}
-							overlapType = "full"
-
-						case "partial":
-							status = "invalid"
-							severity = "medium"
-							message = "FQDN partially overlaps"
-							overlapType = "partial"
-						}
-						break
-					}
-				}
-			}
-
-			// -------- NETWORK vs NETWORK --------
-			if curr.Type == "network" && prev.Type == "network" {
-
-				if rel, ok := cidrRelation(prev.Dst, curr.Dst); ok {
-
-					compared = prev.Name
-					effectiveAction = prev.Action
-					hitRule = prev.Name
-
-					switch rel {
-					case "exact":
-						status = "invalid"
-						severity = "medium"
-						message = "Duplicate rule"
-						overlapType = "exact"
-
-					case "full":
-						status = "invalid"
-						severity = "high"
-						message = "Fully shadowed"
-						overlapType = "full"
-
-					case "partial":
-						status = "invalid"
-						severity = "medium"
-						message = "Partial overlap"
-						overlapType = "partial"
-					}
+		// ❌ App private IP
+		if curr.Type == "app" {
+			for _, ip := range curr.IPs {
+				if ip.IsPrivate() {
+					status = "invalid"
+					severity = "high"
+					message = "App rule resolves to private IP"
 					break
 				}
 			}
 		}
 
-		// -------- JUSTIFICATION --------
+		//////////////// OVERLAP //////////////////
+
+		for j := 0; j < i; j++ {
+			prev := rules[j]
+
+			// App vs Network
+			if curr.Type == "app" && prev.Type == "network" {
+				for _, ip := range curr.IPs {
+					if rel, ok := cidrRelation(prev.Dst, netip.PrefixFrom(ip, 32).String()); ok {
+						compared = prev.Name
+						effective = prev.Action
+						hit = prev.Name
+
+						if prev.Action != curr.Action {
+							status = "invalid"
+							severity = "high"
+							message = "Conflict (blocked by network rule)"
+						} else {
+							status = "invalid"
+							severity = "medium"
+							message = "Shadowed by network rule"
+						}
+						overlap = rel
+						break
+					}
+				}
+			}
+
+			// Network vs Network
+			if curr.Type == "network" && prev.Type == "network" {
+				if rel, ok := cidrRelation(prev.Dst, curr.Dst); ok {
+					compared = prev.Name
+					effective = prev.Action
+					hit = prev.Name
+
+					status = "invalid"
+					message = "CIDR overlap"
+					severity = "medium"
+					overlap = rel
+					break
+				}
+			}
+		}
+
+		//////////////// JUSTIFICATION //////////////////
+
 		justified := false
-		if curr.Justification != "" && status != "valid" {
+		if curr.Justification != "" && status == "invalid" {
 			justified = true
 			status = "valid"
 			severity = "info"
-			message += " (Justified Override)"
+			message += " (Justified)"
 		}
 
 		findings = append(findings, Finding{
-			RuleName:           curr.Name,
-			Type:               "rule_evaluation",
-			Status:             status,
-			Severity:           severity,
-			Message:            message,
+			RuleName: curr.Name,
+			Type: "rule_evaluation",
+			Status: status,
+			Severity: severity,
+			Message: message,
 
-			Source:             curr.Src,
-			Destination:        chooseDest(curr),
-			Port:               curr.Port,
-			Protocol:           curr.Protocol,
+			Source: curr.Src,
+			Destination: chooseDest(curr),
+			Port: curr.Port,
+			Protocol: curr.Protocol,
 
-			RulePriority:       curr.RulePriority,
-			CollectionName:     curr.CollectionName,
+			RulePriority: curr.RulePriority,
+			CollectionName: curr.CollectionName,
 			CollectionPriority: curr.CollectionPrio,
-			RCGName:            curr.RCGName,
-			RCGPriority:        curr.RCGPriority,
+			RCGName: curr.RCGName,
+			RCGPriority: curr.RCGPriority,
 
-			ProcessingOrder:    curr.ProcessingOrder,
+			ProcessingOrder: curr.ProcessingOrder,
+			PriorityPath: buildPriorityPath(curr),
+			EvaluationPath: buildEvaluationPath(curr),
 
-			PriorityPath:       buildPriorityPath(curr),
-			EvaluationPath:     buildEvaluationPath(curr),
+			ComparedWith: compared,
+			OverlapType: overlap,
 
-			ComparedWith:       compared,
-			OverlapType:        overlapType,
+			Justified: justified,
+			Justification: curr.Justification,
 
-			Justified:          justified,
-			Justification:      curr.Justification,
-
-			Suggestion:         suggest(status),
-
-			EffectiveAction:    effectiveAction,
-			HitRule:            hitRule,
+			Suggestion: suggest(status),
+			EffectiveAction: effective,
+			HitRule: hit,
 		})
 	}
 
@@ -453,5 +411,5 @@ func suggest(status string) string {
 	if status == "valid" {
 		return "No action needed"
 	}
-	return "Review rule design or ordering"
+	return "Review rule"
 }
