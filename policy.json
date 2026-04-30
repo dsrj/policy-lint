@@ -3,139 +3,84 @@
     "prod": ["10.0.0.0/16"],
     "web": ["10.0.1.0/24"],
     "db": ["10.0.5.5/32"],
-    "internet": ["0.0.0.0/0"],
-    "invalid_group": ["bad-ip"]
+    "internet": ["0.0.0.0/0"]
   },
+
+  "dns_servers": [
+    "168.63.129.16"
+  ],
 
   "rule_collection_groups": [
 
     {
-      "name": "rcg-early-deny",
+      "name": "rcg-invalid-network-fqdn",
       "priority": 100,
 
       "network_rule_collections": [
         {
-          "name": "deny-all-prod",
+          "name": "network-invalid-fqdn",
           "priority": 100,
-          "action": "deny",
+          "action": "allow",
           "rules": [
             {
-              "name": "deny_prod_all",
+              "name": "network_rule_with_fqdn_invalid",
               "priority": 100,
-              "source": ["prod"],
-              "destination": ["internet"],
-              "ports": ["*"],
-              "protocol": "Any"
+              "source": ["web"],
+              "destination": ["google.com"],
+              "ports": ["443"],
+              "protocol": "TCP"
             }
           ]
         }
       ],
 
-      "app_rule_collections": [
-        {
-          "name": "wildcard-app",
-          "priority": 100,
-          "action": "allow",
-          "rules": [
-            {
-              "name": "wildcard_allow",
-              "priority": 50,
-              "source": ["prod"],
-              "fqdns": ["*"]
-            }
-          ]
-        }
-      ]
+      "app_rule_collections": []
     },
 
     {
-      "name": "rcg-mid-allow",
+      "name": "rcg-valid-network-fqdn-justified",
       "priority": 200,
 
       "network_rule_collections": [
         {
-          "name": "allow-specific",
+          "name": "network-justified",
           "priority": 100,
           "action": "allow",
           "rules": [
             {
-              "name": "allow_web_dns",
+              "name": "network_rule_with_fqdn_justified",
               "priority": 100,
               "source": ["web"],
-              "destination": ["8.8.8.8/32"],
-              "ports": ["53"],
-              "protocol": "UDP"
-            },
-            {
-              "name": "shadowed_db_rule",
-              "priority": 200,
-              "source": ["db"],
-              "destination": ["internet"],
+              "destination": ["microsoft.com"],
               "ports": ["443"],
               "protocol": "TCP",
-              "justification": "This is intentionally shadowed"
-            },
-            {
-              "name": "duplicate_rule_1",
-              "priority": 300,
-              "source": ["web"],
-              "destination": ["internet"],
-              "ports": ["80"],
-              "protocol": "TCP"
-            },
-            {
-              "name": "duplicate_rule_2",
-              "priority": 301,
-              "source": ["web"],
-              "destination": ["internet"],
-              "ports": ["80"],
-              "protocol": "TCP"
-            }
-          ]
-        },
-
-        {
-          "name": "invalid-config",
-          "priority": 200,
-          "action": "allow",
-          "rules": [
-            {
-              "name": "invalid_cidr_rule",
-              "priority": 100,
-              "source": ["invalid_group"],
-              "destination": ["not-a-cidr"],
-              "ports": ["443"],
-              "protocol": "TCP"
-            },
-            {
-              "name": "empty_ports_rule",
-              "priority": 200,
-              "source": ["web"],
-              "destination": ["internet"],
-              "ports": [],
-              "protocol": "TCP"
+              "justification": "Approved SNAT scenario"
             }
           ]
         }
       ],
 
+      "app_rule_collections": []
+    },
+
+    {
+      "name": "rcg-app-private-ip",
+      "priority": 300,
+
+      "network_rule_collections": [],
+
       "app_rule_collections": [
         {
-          "name": "app-specific",
+          "name": "app-private-ip-test",
           "priority": 100,
           "action": "allow",
           "rules": [
             {
-              "name": "google_rule",
+              "name": "app_rule_private_ip",
               "priority": 100,
               "source": ["web"],
-              "fqdns": ["google.com"]
-            },
-            {
-              "name": "shadowed_by_wildcard",
-              "priority": 200,
-              "source": ["web"],
-              "fqdns": ["microsoft.com"]
+              "fqdns": ["internal.local"],
+              "justification": ""
             }
           ]
         }
@@ -143,17 +88,40 @@
     },
 
     {
-      "name": "rcg-late-rules",
-      "priority": 300,
+      "name": "rcg-app-valid-public",
+      "priority": 400,
 
-      "network_rule_collections": [
+      "network_rule_collections": [],
+
+      "app_rule_collections": [
         {
-          "name": "late-allow",
+          "name": "app-valid",
           "priority": 100,
           "action": "allow",
           "rules": [
             {
-              "name": "late_rule",
+              "name": "app_rule_valid_public",
+              "priority": 100,
+              "source": ["web"],
+              "fqdns": ["google.com"]
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "rcg-mixed",
+      "priority": 500,
+
+      "network_rule_collections": [
+        {
+          "name": "network-valid",
+          "priority": 100,
+          "action": "allow",
+          "rules": [
+            {
+              "name": "valid_network_rule",
               "priority": 100,
               "source": ["web"],
               "destination": ["internet"],
@@ -166,13 +134,20 @@
 
       "app_rule_collections": [
         {
-          "name": "late-app",
+          "name": "app-mixed",
           "priority": 100,
           "action": "allow",
           "rules": [
             {
-              "name": "valid_app_rule",
-              "priority": 100,
+              "name": "app_rule_private_ip_with_justification",
+              "priority": 200,
+              "source": ["web"],
+              "fqdns": ["internal.local"],
+              "justification": "Temporary internal routing"
+            },
+            {
+              "name": "app_rule_public_valid",
+              "priority": 300,
               "source": ["web"],
               "fqdns": ["example.com"]
             }

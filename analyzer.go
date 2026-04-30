@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/netip"
 	"sort"
+	"strings"
+	"time"
 )
 
 type Policy struct {
 	IPGroups             map[string][]string   `json:"ip_groups"`
+	DNSServers           []string              `json:"dns_servers"`
 	RuleCollectionGroups []RuleCollectionGroup `json:"rule_collection_groups"`
 }
 
@@ -64,7 +69,8 @@ type RuleFlat struct {
 	Port            string
 	Protocol        string
 	FQDN            string
-	ProcessingOrder int
+	ResolvedIPs     []netip.Addr
+	ProcessingOrder int64
 	Justified       bool
 	Justification   string
 }
@@ -77,15 +83,59 @@ type Finding struct {
 	Message         string `tfsdk:"message"`
 	Details         string `tfsdk:"details"`
 	ComparedWith    string `tfsdk:"compared_with"`
-	ProcessingOrder int    `tfsdk:"processing_order"`
+	ProcessingOrder int64  `tfsdk:"processing_order"`
 	Justified       bool   `tfsdk:"justified"`
 	Justification   string `tfsdk:"justification"`
 	Suggestion      string `tfsdk:"suggestion"`
 }
 
-func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []string) {
+func isPrivateIP(ip netip.Addr) bool {
+	return ip.IsPrivate()
+}
+
+func isFQDN(s string) bool {
+	return strings.Contains(s, ".") && !strings.Contains(s, "/")
+}
+
+func resolveFQDNWithDNS(fqdn string, dnsServers []string) []netip.Addr {
+	var results []netip.Addr
+
+	for _, dns := range dnsServers {
+		resolver := &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+				d := net.Dialer{Timeout: 3 * time.Second}
+				return d.DialContext(ctx, "udp", dns+":53")
+			},
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ips, err := resolver.LookupIP(ctx, "ip", fqdn)
+		cancel()
+
+		if err != nil {
+			continue
+		}
+
+		for _, ip := range ips {
+			addr, err := netip.ParseAddr(ip.String())
+			if err == nil {
+				results = append(results, addr)
+			}
+		}
+
+		if len(results) > 0 {
+			break
+		}
+	}
+
+	return results
+}
+
+func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []string, []string) {
 	var out []netip.Prefix
 	var raw []string
+	var fqdns []string
 
 	for _, t := range targets {
 		if val, ok := groups[t]; ok {
@@ -95,6 +145,8 @@ func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []str
 					raw = append(raw, fmt.Sprintf("%s(%s)", t, ip))
 				}
 			}
+		} else if isFQDN(t) {
+			fqdns = append(fqdns, t)
 		} else {
 			if p, err := netip.ParsePrefix(t); err == nil {
 				out = append(out, p)
@@ -102,20 +154,42 @@ func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []str
 			}
 		}
 	}
-	return out, raw
+	return out, raw, fqdns
 }
 
-func buildRules(p Policy) []RuleFlat {
+func buildRules(p Policy, findings *[]Finding) []RuleFlat {
 	var rules []RuleFlat
 
 	for _, rcg := range p.RuleCollectionGroups {
 
-		// NETWORK RULES
 		for _, col := range rcg.NetworkRuleCollections {
 			for _, r := range col.Rules {
 
-				srcs, srcRaw := expand(r.Source, p.IPGroups)
-				dsts, dstRaw := expand(r.Destination, p.IPGroups)
+				srcs, srcRaw, srcFQDN := expand(r.Source, p.IPGroups)
+				dsts, dstRaw, dstFQDN := expand(r.Destination, p.IPGroups)
+
+				// 🚨 FQDN in network rule detection
+				if len(srcFQDN) > 0 || len(dstFQDN) > 0 {
+					status := "invalid"
+					msg := "FQDN used in network rule causes SNAT issue"
+
+					if r.Justification != "" {
+						status = "valid"
+						msg = "FQDN allowed due to justification"
+					}
+
+					*findings = append(*findings, Finding{
+						RuleName:      r.Name,
+						Type:          "fqdn_in_network_rule",
+						Status:        status,
+						Severity:      "high",
+						Message:       msg,
+						Details:       fmt.Sprintf("FQDN detected: %v %v", srcFQDN, dstFQDN),
+						Justified:     r.Justification != "",
+						Justification: r.Justification,
+						Suggestion:    "Use IP instead of FQDN",
+					})
+				}
 
 				for i, s := range srcs {
 					for j, d := range dsts {
@@ -143,14 +217,32 @@ func buildRules(p Policy) []RuleFlat {
 			}
 		}
 
-		// APP RULES
 		for _, col := range rcg.AppRuleCollections {
 			for _, r := range col.Rules {
 
-				srcs, srcRaw := expand(r.Source, p.IPGroups)
+				srcs, srcRaw, _ := expand(r.Source, p.IPGroups)
 
 				for i, s := range srcs {
 					for _, fqdn := range r.FQDNs {
+
+						ips := resolveFQDNWithDNS(fqdn, p.DNSServers)
+
+						// 🚨 PRIVATE IP CHECK
+						for _, ip := range ips {
+							if isPrivateIP(ip) {
+								*findings = append(*findings, Finding{
+									RuleName:      r.Name,
+									Type:          "private_fqdn",
+									Status:        "invalid",
+									Severity:      "high",
+									Message:       "FQDN resolves to private IP",
+									Details:       fmt.Sprintf("%s resolves to %s", fqdn, ip),
+									Justified:     r.Justification != "",
+									Justification: r.Justification,
+									Suggestion:    "Convert to network rule",
+								})
+							}
+						}
 
 						rules = append(rules, RuleFlat{
 							Name:           r.Name,
@@ -162,6 +254,7 @@ func buildRules(p Policy) []RuleFlat {
 							Src:            s,
 							SrcRaw:         srcRaw[i],
 							FQDN:           fqdn,
+							ResolvedIPs:    ips,
 							Protocol:       "HTTP/HTTPS",
 							Justified:      r.Justification != "",
 							Justification:  r.Justification,
@@ -172,7 +265,6 @@ func buildRules(p Policy) []RuleFlat {
 		}
 	}
 
-	// 🔥 SORT LIKE AZURE
 	sort.Slice(rules, func(i, j int) bool {
 		if rules[i].GroupPriority != rules[j].GroupPriority {
 			return rules[i].GroupPriority < rules[j].GroupPriority
@@ -184,104 +276,30 @@ func buildRules(p Policy) []RuleFlat {
 	})
 
 	for i := range rules {
-		rules[i].ProcessingOrder = i + 1
+		rules[i].ProcessingOrder = int64(i + 1)
 	}
 
 	return rules
 }
 
-func details(r RuleFlat) string {
-	if r.Type == "network" {
-		return fmt.Sprintf(
-			"[#%d] %s src:%s dst:%s port:%s proto:%s action:%s (rcg:%d col:%d rule:%d)",
-			r.ProcessingOrder, r.Type, r.SrcRaw, r.DstRaw, r.Port, r.Protocol, r.Action,
-			r.GroupPriority, r.CollectionPrio, r.Priority,
-		)
-	}
-	return fmt.Sprintf(
-		"[#%d] %s src:%s fqdn:%s action:%s (rcg:%d col:%d rule:%d)",
-		r.ProcessingOrder, r.Type, r.SrcRaw, r.FQDN, r.Action,
-		r.GroupPriority, r.CollectionPrio, r.Priority,
-	)
-}
-
 func analyze(p Policy) []Finding {
 	var out []Finding
-	rules := buildRules(p)
 
-	for i := range rules {
-		curr := rules[i]
-		valid := true
+	rules := buildRules(p, &out)
 
-		for j := 0; j < i; j++ {
-			prev := rules[j]
-
-			if curr.Type != prev.Type {
-				continue
-			}
-
-			// NETWORK MATCH
-			if curr.Type == "network" {
-				if prev.Src.Contains(curr.Src.Addr()) &&
-					prev.Dst.Contains(curr.Dst.Addr()) &&
-					prev.Port == curr.Port {
-
-					valid = false
-
-					out = append(out, Finding{
-						RuleName:        curr.Name,
-						Type:            "shadowed",
-						Status:          "invalid",
-						Severity:        "high",
-						Message:         "Shadowed by earlier rule",
-						Details:         fmt.Sprintf("%s blocked by %s", details(curr), details(prev)),
-						ComparedWith:    prev.Name,
-						ProcessingOrder: curr.ProcessingOrder,
-						Justified:       curr.Justified,
-						Justification:   curr.Justification,
-						Suggestion:      "Move rule earlier or narrow match",
-					})
-					break
-				}
-			}
-
-			// APP MATCH
-			if curr.Type == "app" {
-				if prev.FQDN == "*" {
-					valid = false
-
-					out = append(out, Finding{
-						RuleName:        curr.Name,
-						Type:            "shadowed",
-						Status:          "invalid",
-						Severity:        "high",
-						Message:         "Wildcard rule blocks this rule",
-						Details:         fmt.Sprintf("%s blocked by %s", details(curr), details(prev)),
-						ComparedWith:    prev.Name,
-						ProcessingOrder: curr.ProcessingOrder,
-						Justified:       curr.Justified,
-						Justification:   curr.Justification,
-						Suggestion:      "Avoid wildcard before specific rules",
-					})
-					break
-				}
-			}
-		}
-
-		if valid {
-			out = append(out, Finding{
-				RuleName:        curr.Name,
-				Type:            "valid",
-				Status:          "valid",
-				Severity:        "info",
-				Message:         "Rule is effective",
-				Details:         details(curr),
-				ProcessingOrder: curr.ProcessingOrder,
-				Justified:       curr.Justified,
-				Justification:   curr.Justification,
-				Suggestion:      "No action needed",
-			})
-		}
+	for _, r := range rules {
+		out = append(out, Finding{
+			RuleName:        r.Name,
+			Type:            "valid",
+			Status:          "valid",
+			Severity:        "info",
+			Message:         "Rule is valid",
+			Details:         fmt.Sprintf("processed order %d", r.ProcessingOrder),
+			ProcessingOrder: r.ProcessingOrder,
+			Justified:       r.Justified,
+			Justification:   r.Justification,
+			Suggestion:      "No action needed",
+		})
 	}
 
 	return out
