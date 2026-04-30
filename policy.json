@@ -1,24 +1,26 @@
 {
   "ip_groups": {
     "prod": ["10.0.0.0/16"],
+    "web": ["10.0.1.0/24"],
     "db": ["10.0.5.5/32"],
-    "internet": ["0.0.0.0/0"]
+    "internet": ["0.0.0.0/0"],
+    "invalid_group": ["bad-ip"]
   },
 
   "rule_collection_groups": [
 
     {
-      "name": "rcg-deny",
+      "name": "rcg-early-deny",
       "priority": 100,
 
       "network_rule_collections": [
         {
-          "name": "deny-all",
+          "name": "deny-all-prod",
           "priority": 100,
           "action": "deny",
           "rules": [
             {
-              "name": "deny_prod",
+              "name": "deny_prod_all",
               "priority": 100,
               "source": ["prod"],
               "destination": ["internet"],
@@ -29,23 +31,131 @@
         }
       ],
 
-      "app_rule_collections": []
-    },
-
-    {
-      "name": "rcg-allow",
-      "priority": 200,
-
-      "network_rule_collections": [
+      "app_rule_collections": [
         {
-          "name": "allow-db",
+          "name": "wildcard-app",
           "priority": 100,
           "action": "allow",
           "rules": [
             {
-              "name": "allow_db",
+              "name": "wildcard_allow",
+              "priority": 50,
+              "source": ["prod"],
+              "fqdns": ["*"]
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "rcg-mid-allow",
+      "priority": 200,
+
+      "network_rule_collections": [
+        {
+          "name": "allow-specific",
+          "priority": 100,
+          "action": "allow",
+          "rules": [
+            {
+              "name": "allow_web_dns",
               "priority": 100,
+              "source": ["web"],
+              "destination": ["8.8.8.8/32"],
+              "ports": ["53"],
+              "protocol": "UDP"
+            },
+            {
+              "name": "shadowed_db_rule",
+              "priority": 200,
               "source": ["db"],
+              "destination": ["internet"],
+              "ports": ["443"],
+              "protocol": "TCP",
+              "justification": "This is intentionally shadowed"
+            },
+            {
+              "name": "duplicate_rule_1",
+              "priority": 300,
+              "source": ["web"],
+              "destination": ["internet"],
+              "ports": ["80"],
+              "protocol": "TCP"
+            },
+            {
+              "name": "duplicate_rule_2",
+              "priority": 301,
+              "source": ["web"],
+              "destination": ["internet"],
+              "ports": ["80"],
+              "protocol": "TCP"
+            }
+          ]
+        },
+
+        {
+          "name": "invalid-config",
+          "priority": 200,
+          "action": "allow",
+          "rules": [
+            {
+              "name": "invalid_cidr_rule",
+              "priority": 100,
+              "source": ["invalid_group"],
+              "destination": ["not-a-cidr"],
+              "ports": ["443"],
+              "protocol": "TCP"
+            },
+            {
+              "name": "empty_ports_rule",
+              "priority": 200,
+              "source": ["web"],
+              "destination": ["internet"],
+              "ports": [],
+              "protocol": "TCP"
+            }
+          ]
+        }
+      ],
+
+      "app_rule_collections": [
+        {
+          "name": "app-specific",
+          "priority": 100,
+          "action": "allow",
+          "rules": [
+            {
+              "name": "google_rule",
+              "priority": 100,
+              "source": ["web"],
+              "fqdns": ["google.com"]
+            },
+            {
+              "name": "shadowed_by_wildcard",
+              "priority": 200,
+              "source": ["web"],
+              "fqdns": ["microsoft.com"]
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "rcg-late-rules",
+      "priority": 300,
+
+      "network_rule_collections": [
+        {
+          "name": "late-allow",
+          "priority": 100,
+          "action": "allow",
+          "rules": [
+            {
+              "name": "late_rule",
+              "priority": 100,
+              "source": ["web"],
               "destination": ["internet"],
               "ports": ["443"],
               "protocol": "TCP"
@@ -56,15 +166,15 @@
 
       "app_rule_collections": [
         {
-          "name": "app-allow",
+          "name": "late-app",
           "priority": 100,
           "action": "allow",
           "rules": [
             {
-              "name": "allow_google",
+              "name": "valid_app_rule",
               "priority": 100,
-              "source": ["prod"],
-              "fqdns": ["google.com"]
+              "source": ["web"],
+              "fqdns": ["example.com"]
             }
           ]
         }
