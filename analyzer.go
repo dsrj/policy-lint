@@ -23,21 +23,14 @@ type NetworkRule struct {
 	Justification string   `json:"justification"`
 }
 
-type AppRule struct {
-	Name          string   `json:"name"`
-	Priority      int      `json:"priority"`
-	Action        string   `json:"action"`
-	Source        []string `json:"source"`
-	FQDNs         []string `json:"fqdns"`
-	Justification string   `json:"justification"`
-}
-
 type RuleFlat struct {
 	Name          string
 	Priority      int
 	Action        string
 	Src           netip.Prefix
 	Dst           netip.Prefix
+	SrcRaw        string
+	DstRaw        string
 	Port          string
 	Protocol      string
 	Justified     bool
@@ -61,15 +54,17 @@ func overlaps(r1, r2 RuleFlat) bool {
 	return r1.Src.Overlaps(r2.Src) && r1.Dst.Overlaps(r2.Dst)
 }
 
-func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []string) {
+func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []string, []string) {
 	var out []netip.Prefix
 	var invalid []string
+	var raw []string
 
 	for _, t := range targets {
 		if val, exists := groups[t]; exists {
 			for _, ip := range val {
 				if p, err := netip.ParsePrefix(ip); err == nil && p.IsValid() {
 					out = append(out, p)
+					raw = append(raw, fmt.Sprintf("%s(%s)", t, ip))
 				} else {
 					invalid = append(invalid, ip)
 				}
@@ -77,12 +72,14 @@ func expand(targets []string, groups map[string][]string) ([]netip.Prefix, []str
 		} else {
 			if p, err := netip.ParsePrefix(t); err == nil && p.IsValid() {
 				out = append(out, p)
+				raw = append(raw, t)
 			} else {
 				invalid = append(invalid, t)
 			}
 		}
 	}
-	return out, invalid
+
+	return out, invalid, raw
 }
 
 func flatten(p Policy) ([]RuleFlat, []Finding) {
@@ -91,38 +88,8 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 
 	for _, r := range p.NetworkRules {
 
-		if len(r.Ports) == 0 {
-			findings = append(findings, Finding{
-				RuleName:      r.Name,
-				Type:          "empty_ports",
-				Status:        "invalid",
-				Severity:      "medium",
-				Message:       "No ports defined",
-				Details:       "ports: []",
-				Justified:     r.Justification != "",
-				Justification: r.Justification,
-				Suggestion:    "Define ports or remove rule",
-			})
-		}
-
-		for _, port := range r.Ports {
-			if port == "*" {
-				findings = append(findings, Finding{
-					RuleName:      r.Name,
-					Type:          "overly_permissive",
-					Status:        "invalid",
-					Severity:      "high",
-					Message:       "Allows all ports",
-					Details:       "ports: *",
-					Justified:     r.Justification != "",
-					Justification: r.Justification,
-					Suggestion:    "Restrict ports",
-				})
-			}
-		}
-
-		srcs, invalidSrc := expand(r.Source, p.IPGroups)
-		dsts, invalidDst := expand(r.Destination, p.IPGroups)
+		srcs, invalidSrc, rawSrc := expand(r.Source, p.IPGroups)
+		dsts, invalidDst, rawDst := expand(r.Destination, p.IPGroups)
 
 		for _, bad := range append(invalidSrc, invalidDst...) {
 			findings = append(findings, Finding{
@@ -134,19 +101,22 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 				Details:       bad,
 				Justified:     r.Justification != "",
 				Justification: r.Justification,
-				Suggestion:    "Fix CIDR format",
+				Suggestion:    "Fix CIDR",
 			})
 		}
 
-		for _, s := range srcs {
-			for _, d := range dsts {
+		for i, s := range srcs {
+			for j, d := range dsts {
 				for _, port := range r.Ports {
+
 					result = append(result, RuleFlat{
 						Name:          r.Name,
 						Priority:      r.Priority,
 						Action:        r.Action,
 						Src:           s,
 						Dst:           d,
+						SrcRaw:        rawSrc[i],
+						DstRaw:        rawDst[j],
 						Port:          port,
 						Protocol:      r.Protocol,
 						Justified:     r.Justification != "",
@@ -158,6 +128,13 @@ func flatten(p Policy) ([]RuleFlat, []Finding) {
 	}
 
 	return result, findings
+}
+
+func ruleDetails(r RuleFlat) string {
+	return fmt.Sprintf(
+		"src:%s dst:%s port:%s protocol:%s priority:%d action:%s",
+		r.SrcRaw, r.DstRaw, r.Port, r.Protocol, r.Priority, r.Action,
+	)
 }
 
 func analyze(p Policy) []Finding {
@@ -176,17 +153,19 @@ func analyze(p Policy) []Finding {
 	for i := 0; i < len(rules); i++ {
 		r1 := rules[i]
 
-		key := fmt.Sprintf("%s|%s|%s|%s|%s", r1.Src, r1.Dst, r1.Port, r1.Protocol, r1.Action)
+		key := fmt.Sprintf("%s|%s|%s|%s|%s",
+			r1.Src, r1.Dst, r1.Port, r1.Protocol, r1.Action)
 
 		if prev, exists := seen[key]; exists {
 			validMap[r1.Name] = false
+
 			f = append(f, Finding{
 				RuleName:      r1.Name,
 				Type:          "duplicate",
 				Status:        "invalid",
 				Severity:      "medium",
 				Message:       "Duplicate rule",
-				Details:       key,
+				Details:       ruleDetails(r1),
 				ComparedWith:  prev,
 				Justified:     r1.Justified,
 				Justification: r1.Justification,
@@ -208,15 +187,23 @@ func analyze(p Policy) []Finding {
 				a, b = b, a
 			}
 
+			// CIDR comparison details
+			cidrCompare := fmt.Sprintf(
+				"%s contains %s = %v | %s contains %s = %v",
+				a.Src, b.Src, a.Src.Contains(b.Src.Addr()),
+				a.Dst, b.Dst, a.Dst.Contains(b.Dst.Addr()),
+			)
+
 			if a.Protocol != b.Protocol && a.Protocol != "Any" && b.Protocol != "Any" {
 				validMap[b.Name] = false
+
 				f = append(f, Finding{
 					RuleName:      b.Name,
 					Type:          "protocol_mismatch",
 					Status:        "invalid",
 					Severity:      "low",
 					Message:       "Protocol mismatch",
-					Details:       fmt.Sprintf("%s=%s vs %s=%s", a.Name, a.Protocol, b.Name, b.Protocol),
+					Details:       fmt.Sprintf("%s | %s", ruleDetails(b), cidrCompare),
 					ComparedWith:  a.Name,
 					Justified:     b.Justified,
 					Justification: b.Justification,
@@ -224,15 +211,19 @@ func analyze(p Policy) []Finding {
 				})
 			}
 
-			if a.Src.Contains(b.Src.Addr()) && a.Dst.Contains(b.Dst.Addr()) && a.Port == b.Port {
+			if a.Src.Contains(b.Src.Addr()) &&
+				a.Dst.Contains(b.Dst.Addr()) &&
+				a.Port == b.Port {
+
 				validMap[b.Name] = false
+
 				f = append(f, Finding{
 					RuleName:      b.Name,
 					Type:          "shadowed",
 					Status:        "invalid",
-					Severity:      "medium",
+					Severity:      "high",
 					Message:       "Rule is shadowed",
-					Details:       fmt.Sprintf("src:%s dst:%s port:%s", b.Src, b.Dst, b.Port),
+					Details:       fmt.Sprintf("%s | compared with %s | %s", ruleDetails(b), ruleDetails(a), cidrCompare),
 					ComparedWith:  a.Name,
 					Justified:     b.Justified,
 					Justification: b.Justification,
@@ -242,6 +233,7 @@ func analyze(p Policy) []Finding {
 		}
 	}
 
+	// VALID rules with FULL details
 	for _, r := range rules {
 		if validMap[r.Name] {
 			f = append(f, Finding{
@@ -249,8 +241,8 @@ func analyze(p Policy) []Finding {
 				Type:          "valid",
 				Status:        "valid",
 				Severity:      "info",
-				Message:       "Rule is valid and not conflicting",
-				Details:       fmt.Sprintf("src:%s dst:%s port:%s protocol:%s action:%s", r.Src, r.Dst, r.Port, r.Protocol, r.Action),
+				Message:       "Rule is valid",
+				Details:       ruleDetails(r),
 				Justified:     r.Justified,
 				Justification: r.Justification,
 				Suggestion:    "No action needed",
