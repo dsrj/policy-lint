@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/netip"
 	"sort"
@@ -56,25 +57,23 @@ type AppRule struct {
 }
 
 type RuleFlat struct {
-	Name            string
-	Type            string
-	Action          string
-	Src             string
-	Dst             string
-	Port            string
-	Protocol        string
-	FQDN            string
-	IPs             []netip.Addr
+	Name           string
+	Type           string
+	Action         string
+	Src            string
+	Dst            string
+	Port           string
+	Protocol       string
+	FQDN           string
+	IPs            []netip.Addr
 
-	RulePriority    int
-	CollectionName  string
-	CollectionPrio  int
-	RCGName         string
-	RCGPriority     int
+	RulePriority   int
+	CollectionName string
+	CollectionPrio int
+	RCGName        string
+	RCGPriority    int
 
 	ProcessingOrder int64
-	Justified       bool
-	Justification   string
 }
 
 type Finding struct {
@@ -95,11 +94,13 @@ type Finding struct {
 	RCGName            string `tfsdk:"rcg_name"`
 	RCGPriority        int    `tfsdk:"rcg_priority"`
 
-	ComparedWith       string `tfsdk:"compared_with"`
 	ProcessingOrder    int64  `tfsdk:"processing_order"`
 
-	Justified          bool   `tfsdk:"justified"`
-	Justification      string `tfsdk:"justification"`
+	PriorityPath       string `tfsdk:"priority_path"`
+	EvaluationPath     string `tfsdk:"evaluation_path"`
+
+	ComparedWith       string `tfsdk:"compared_with"`
+	OverlapType        string `tfsdk:"overlap_type"`
 	Suggestion         string `tfsdk:"suggestion"`
 }
 
@@ -110,8 +111,7 @@ func resolveFQDN(fqdn string, dnsServers []string) []netip.Addr {
 		resolver := &net.Resolver{
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 3 * time.Second}
-				return d.DialContext(ctx, "udp", dns+":53")
+				return net.DialTimeout("udp", dns+":53", 3*time.Second)
 			},
 		}
 
@@ -124,14 +124,9 @@ func resolveFQDN(fqdn string, dnsServers []string) []netip.Addr {
 		}
 
 		for _, ip := range ips {
-			addr, err := netip.ParseAddr(ip.String())
-			if err == nil {
+			if addr, err := netip.ParseAddr(ip.String()); err == nil {
 				results = append(results, addr)
 			}
-		}
-
-		if len(results) > 0 {
-			break
 		}
 	}
 
@@ -173,9 +168,6 @@ func buildRules(p Policy) []RuleFlat {
 								CollectionPrio: col.Priority,
 								RCGName:        rcg.Name,
 								RCGPriority:    rcg.Priority,
-
-								Justified:      r.Justification != "",
-								Justification:  r.Justification,
 							})
 						}
 					}
@@ -208,9 +200,6 @@ func buildRules(p Policy) []RuleFlat {
 						CollectionPrio: col.Priority,
 						RCGName:        rcg.Name,
 						RCGPriority:    rcg.Priority,
-
-						Justified:      r.Justification != "",
-						Justification:  r.Justification,
 					})
 				}
 			}
@@ -241,50 +230,104 @@ func analyze(p Policy) []Finding {
 	for i := range rules {
 		curr := rules[i]
 
+		status := "valid"
+		message := "Rule is valid"
+		severity := "info"
+		overlapType := ""
+		var compared string
+
 		for j := 0; j < i; j++ {
 			prev := rules[j]
 
+			// App vs Network
 			if curr.Type == "app" && prev.Type == "network" {
-
 				for _, ip := range curr.IPs {
-
 					if strings.Contains(prev.Dst, ip.String()) || prev.Dst == "0.0.0.0/0" {
 
-						msg := "FQDN overlaps with network rule"
+						status = "invalid"
+						severity = "high"
+						compared = prev.Name
+
 						if prev.Action != curr.Action {
-							msg = "Conflict between app and network rule"
+							message = "Conflict (allow vs deny)"
+						} else {
+							message = "Shadowed by previous rule"
 						}
-
-						findings = append(findings, Finding{
-							RuleName:           curr.Name,
-							Type:               "fqdn_network_overlap",
-							Status:             "invalid",
-							Severity:           "high",
-							Message:            msg,
-
-							Source:             curr.Src,
-							Destination:        curr.FQDN,
-							Port:               curr.Port,
-							Protocol:           curr.Protocol,
-
-							RulePriority:       curr.RulePriority,
-							CollectionName:     curr.CollectionName,
-							CollectionPriority: curr.CollectionPrio,
-							RCGName:            curr.RCGName,
-							RCGPriority:        curr.RCGPriority,
-
-							ComparedWith:       prev.Name,
-							ProcessingOrder:    curr.ProcessingOrder,
-
-							Justified:          curr.Justified,
-							Justification:      curr.Justification,
-							Suggestion:         "Review rule ordering or remove overlap",
-						})
+						overlapType = "full"
 					}
 				}
 			}
+
+			// Network vs Network
+			if curr.Type == "network" && prev.Type == "network" {
+				if curr.Dst == prev.Dst && curr.Port == prev.Port {
+					status = "invalid"
+					severity = "medium"
+					message = "Duplicate rule"
+					overlapType = "exact"
+					compared = prev.Name
+				}
+			}
 		}
+
+		findings = append(findings, Finding{
+			RuleName:           curr.Name,
+			Type:               "rule_evaluation",
+			Status:             status,
+			Severity:           severity,
+			Message:            message,
+
+			Source:             curr.Src,
+			Destination:        chooseDest(curr),
+			Port:               curr.Port,
+			Protocol:           curr.Protocol,
+
+			RulePriority:       curr.RulePriority,
+			CollectionName:     curr.CollectionName,
+			CollectionPriority: curr.CollectionPrio,
+			RCGName:            curr.RCGName,
+			RCGPriority:        curr.RCGPriority,
+
+			ProcessingOrder:    curr.ProcessingOrder,
+
+			PriorityPath:       buildPriorityPath(curr),
+			EvaluationPath:     buildEvaluationPath(curr),
+
+			ComparedWith:       compared,
+			OverlapType:        overlapType,
+			Suggestion:         suggest(status),
+		})
 	}
 
 	return findings
+}
+
+func chooseDest(r RuleFlat) string {
+	if r.Type == "app" {
+		return r.FQDN
+	}
+	return r.Dst
+}
+
+func buildPriorityPath(r RuleFlat) string {
+	return fmt.Sprintf("RCG(%d) -> COLLECTION(%d) -> RULE(%d)",
+		r.RCGPriority,
+		r.CollectionPrio,
+		r.RulePriority,
+	)
+}
+
+func buildEvaluationPath(r RuleFlat) string {
+	return fmt.Sprintf("RCG[%s:%d] -> COLLECTION[%s:%d] -> RULE[%s:%d]",
+		r.RCGName, r.RCGPriority,
+		r.CollectionName, r.CollectionPrio,
+		r.Name, r.RulePriority,
+	)
+}
+
+func suggest(status string) string {
+	if status == "valid" {
+		return "No action needed"
+	}
+	return "Fix rule ordering or definition"
 }
