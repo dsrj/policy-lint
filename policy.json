@@ -15,7 +15,6 @@
     {
       "name": "rcg-invalid-network-fqdn",
       "priority": 100,
-
       "network_rule_collections": [
         {
           "name": "network-invalid-fqdn",
@@ -27,20 +26,19 @@
               "priority": 100,
               "source": ["web"],
               "destination": ["google.com"],
+              "resolved_ips": ["142.250.74.14"],
               "ports": ["443"],
               "protocol": "TCP"
             }
           ]
         }
       ],
-
       "app_rule_collections": []
     },
 
     {
       "name": "rcg-valid-network-fqdn-justified",
       "priority": 200,
-
       "network_rule_collections": [
         {
           "name": "network-justified",
@@ -52,6 +50,7 @@
               "priority": 100,
               "source": ["web"],
               "destination": ["microsoft.com"],
+              "resolved_ips": ["20.70.246.20"],
               "ports": ["443"],
               "protocol": "TCP",
               "justification": "Approved SNAT scenario"
@@ -59,16 +58,13 @@
           ]
         }
       ],
-
       "app_rule_collections": []
     },
 
     {
       "name": "rcg-app-private-ip",
       "priority": 300,
-
       "network_rule_collections": [],
-
       "app_rule_collections": [
         {
           "name": "app-private-ip-test",
@@ -80,7 +76,7 @@
               "priority": 100,
               "source": ["web"],
               "fqdns": ["internal.local"],
-              "justification": ""
+              "resolved_ips": ["10.0.5.5"]
             }
           ]
         }
@@ -90,9 +86,7 @@
     {
       "name": "rcg-app-valid-public",
       "priority": 400,
-
       "network_rule_collections": [],
-
       "app_rule_collections": [
         {
           "name": "app-valid",
@@ -103,7 +97,8 @@
               "name": "app_rule_valid_public",
               "priority": 100,
               "source": ["web"],
-              "fqdns": ["google.com"]
+              "fqdns": ["google.com"],
+              "resolved_ips": ["142.250.74.14"]
             }
           ]
         }
@@ -111,7 +106,7 @@
     },
 
     {
-      "name": "rcg-mixed",
+      "name": "rcg-mixed-advanced",
       "priority": 500,
 
       "network_rule_collections": [
@@ -127,6 +122,14 @@
               "destination": ["internet"],
               "ports": ["443"],
               "protocol": "TCP"
+            },
+            {
+              "name": "network_rule_private_range",
+              "priority": 200,
+              "source": ["web"],
+              "destination": ["10.0.0.0/8"],
+              "ports": ["443"],
+              "protocol": "TCP"
             }
           ]
         }
@@ -140,16 +143,65 @@
           "rules": [
             {
               "name": "app_rule_private_ip_with_justification",
-              "priority": 200,
+              "priority": 100,
               "source": ["web"],
               "fqdns": ["internal.local"],
-              "justification": "Temporary internal routing"
+              "resolved_ips": ["10.0.5.5"],
+              "justification": "Temporary internal routing allowed"
             },
             {
               "name": "app_rule_public_valid",
+              "priority": 200,
+              "source": ["web"],
+              "fqdns": ["example.com"],
+              "resolved_ips": ["93.184.216.34"]
+            },
+            {
+              "name": "app_rule_multiple_ips",
               "priority": 300,
               "source": ["web"],
-              "fqdns": ["example.com"]
+              "fqdns": ["cdn.example.com"],
+              "resolved_ips": ["192.0.2.1", "192.0.2.2"]
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "rcg-edge-cases",
+      "priority": 600,
+
+      "network_rule_collections": [
+        {
+          "name": "network-edge",
+          "priority": 100,
+          "action": "deny",
+          "rules": [
+            {
+              "name": "deny_specific_public_ip",
+              "priority": 100,
+              "source": ["web"],
+              "destination": ["142.250.74.14/32"],
+              "ports": ["443"],
+              "protocol": "TCP"
+            }
+          ]
+        }
+      ],
+
+      "app_rule_collections": [
+        {
+          "name": "app-edge",
+          "priority": 100,
+          "action": "allow",
+          "rules": [
+            {
+              "name": "app_rule_conflict_with_network",
+              "priority": 100,
+              "source": ["web"],
+              "fqdns": ["google.com"],
+              "resolved_ips": ["142.250.74.14"]
             }
           ]
         }
