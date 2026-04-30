@@ -31,12 +31,40 @@ func (d *analysisDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 				Computed: true,
 				NestedObject: datasourceschema.NestedAttributeObject{
 					Attributes: map[string]datasourceschema.Attribute{
-						"type":          datasourceschema.StringAttribute{Computed: true},
-						"severity":      datasourceschema.StringAttribute{Computed: true},
-						"message":       datasourceschema.StringAttribute{Computed: true},
-						"justified":     datasourceschema.BoolAttribute{Computed: true},
-						"justification": datasourceschema.StringAttribute{Computed: true},
-						"suggestion":    datasourceschema.StringAttribute{Computed: true},
+
+						// ✅ NEW FIELDS (must match analyzer.go)
+						"rule_name": datasourceschema.StringAttribute{
+							Computed: true,
+						},
+						"status": datasourceschema.StringAttribute{
+							Computed: true,
+						},
+						"details": datasourceschema.StringAttribute{
+							Computed: true,
+						},
+						"compared_with": datasourceschema.StringAttribute{
+							Computed: true,
+						},
+
+						// ✅ EXISTING FIELDS
+						"type": datasourceschema.StringAttribute{
+							Computed: true,
+						},
+						"severity": datasourceschema.StringAttribute{
+							Computed: true,
+						},
+						"message": datasourceschema.StringAttribute{
+							Computed: true,
+						},
+						"justified": datasourceschema.BoolAttribute{
+							Computed: true,
+						},
+						"justification": datasourceschema.StringAttribute{
+							Computed: true,
+						},
+						"suggestion": datasourceschema.StringAttribute{
+							Computed: true,
+						},
 					},
 				},
 			},
@@ -55,6 +83,7 @@ func (d *analysisDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 
+	// Prevent null crash
 	if data.PolicyJSON.IsNull() || data.PolicyJSON.IsUnknown() {
 		return
 	}
@@ -65,9 +94,10 @@ func (d *analysisDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 
+	// Safety against analyzer panic
 	defer func() {
 		if r := recover(); r != nil {
-			resp.Diagnostics.AddError("Analyzer Panic", "Analyzer crashed")
+			resp.Diagnostics.AddError("Analyzer Panic", "Analyzer crashed during execution")
 		}
 	}()
 
